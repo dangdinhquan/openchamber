@@ -133,8 +133,10 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
 
       const added = addProject(resolvedPath, { id: projectId });
       if (!added) {
-        toast.error('Failed to add project or remote server', {
-          description: 'Please select a valid directory path or OpenCode URL.',
+        toast.error(remoteTarget ? 'Failed to add remote server' : 'Failed to add project', {
+          description: remoteTarget
+            ? 'Please enter a valid OpenCode URL.'
+            : 'Please select a valid directory path.',
         });
         return;
       }
@@ -280,6 +282,7 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
           onChange={(e) => setRemotePassword(e.target.value)}
           placeholder="Optional server password"
           type="password"
+          aria-label="Remote OpenCode server password"
           className="mt-2"
           autoComplete="current-password"
         />

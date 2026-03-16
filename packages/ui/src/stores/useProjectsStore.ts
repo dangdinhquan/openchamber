@@ -97,12 +97,9 @@ const normalizeProjectPath = (value: string): string => {
   if (REMOTE_PROJECT_PROTOCOL_PATTERN.test(trimmed)) {
     try {
       const url = new URL(trimmed);
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-        return '';
-      }
       url.hash = '';
       if (url.pathname !== '/') {
-        url.pathname = url.pathname.replace(/\/+$/, '') || '/';
+        url.pathname = url.pathname.replace(/\/+$/, '');
       }
       return url.toString();
     } catch {
