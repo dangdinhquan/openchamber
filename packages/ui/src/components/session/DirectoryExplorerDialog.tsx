@@ -36,10 +36,25 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
   open,
   onOpenChange,
 }) => {
+  const isRemoteUrl = React.useCallback((value: string): boolean => /^https?:\/\//i.test(value.trim()), []);
+  const withRemotePassword = React.useCallback((value: string, password: string): string => {
+    const trimmedPassword = password.trim();
+    if (!trimmedPassword) {
+      return value;
+    }
+    try {
+      const url = new URL(value.trim());
+      url.searchParams.set('password', trimmedPassword);
+      return url.toString();
+    } catch {
+      return value;
+    }
+  }, []);
   const { currentDirectory, homeDirectory, isHomeReady } = useDirectoryStore();
   const { addProject, getActiveProject } = useProjectsStore();
   const [pendingPath, setPendingPath] = React.useState<string | null>(null);
   const [pathInputValue, setPathInputValue] = React.useState('');
+  const [remotePassword, setRemotePassword] = React.useState('');
   const [hasUserSelection, setHasUserSelection] = React.useState(false);
   const [isConfirming, setIsConfirming] = React.useState(false);
   const showHidden = useDirectoryShowHidden();
@@ -60,6 +75,7 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
       setHasUserSelection(false);
       setIsConfirming(false);
       setAutocompleteVisible(false);
+      setRemotePassword('');
       // Initialize with active project or current directory
       const activeProject = getActiveProject();
       const initialPath = activeProject?.path || currentDirectory || homeDirectory || '';
@@ -93,8 +109,9 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
     try {
       let resolvedPath = targetPath;
       let projectId: string | undefined;
+      const remoteTarget = isRemoteUrl(targetPath);
 
-      if (isDesktop) {
+      if (isDesktop && !remoteTarget) {
         const accessResult = await requestAccess(targetPath);
         if (!accessResult.success) {
           toast.error('Unable to access directory', {
@@ -116,8 +133,8 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
 
       const added = addProject(resolvedPath, { id: projectId });
       if (!added) {
-        toast.error('Failed to add project', {
-          description: 'Please select a valid directory path.',
+        toast.error('Failed to add project or remote server', {
+          description: 'Please select a valid directory path or OpenCode URL.',
         });
         return;
       }
@@ -134,6 +151,7 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
     addProject,
     handleClose,
     isDesktop,
+    isRemoteUrl,
     requestAccess,
     startAccessing,
     isConfirming,
@@ -144,8 +162,11 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
     if (!pathToUse) {
       return;
     }
-    await finalizeSelection(pathToUse);
-  }, [finalizeSelection, pathInputValue, pendingPath]);
+    const resolved = isRemoteUrl(pathToUse)
+      ? withRemotePassword(pathToUse, remotePassword)
+      : pathToUse;
+    await finalizeSelection(resolved);
+  }, [finalizeSelection, isRemoteUrl, pathInputValue, pendingPath, remotePassword, withRemotePassword]);
 
   const handleSelectPath = React.useCallback((path: string) => {
     setPendingPath(path);
@@ -221,13 +242,13 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
 
   const dialogHeader = (
     <DialogHeader className="flex-shrink-0 px-4 pb-2 pt-[calc(var(--oc-safe-area-top,0px)+0.5rem)] sm:px-0 sm:pb-3 sm:pt-0">
-      <DialogTitle>Add project directory</DialogTitle>
-      <div className="hidden sm:flex sm:items-center sm:justify-between sm:gap-4">
-        <DialogDescription className="flex-1">
-          Choose a folder to add as a project.
-        </DialogDescription>
-        {showHiddenToggle}
-      </div>
+        <DialogTitle>Add project directory</DialogTitle>
+        <div className="hidden sm:flex sm:items-center sm:justify-between sm:gap-4">
+          <DialogDescription className="flex-1">
+            Choose a folder or enter a remote OpenCode server URL.
+          </DialogDescription>
+          {showHiddenToggle}
+        </div>
     </DialogHeader>
   );
 
@@ -237,7 +258,7 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
         value={pathInputValue}
         onChange={handlePathInputChange}
         onKeyDown={handlePathInputKeyDown}
-        placeholder="Enter path or select from tree..."
+        placeholder="Enter path or https://server..."
         className="font-mono typography-meta"
         spellCheck={false}
         autoComplete="off"
@@ -253,6 +274,16 @@ export const DirectoryExplorerDialog: React.FC<DirectoryExplorerDialogProps> = (
         onClose={handleAutocompleteClose}
         showHidden={showHidden}
       />
+      {isRemoteUrl(pathInputValue) && (
+        <Input
+          value={remotePassword}
+          onChange={(e) => setRemotePassword(e.target.value)}
+          placeholder="Optional server password"
+          type="password"
+          className="mt-2"
+          autoComplete="current-password"
+        />
+      )}
     </div>
   );
 

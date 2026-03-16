@@ -33,7 +33,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { toast } from '@/components/ui';
 
 import { UpdateDialog } from '@/components/ui/UpdateDialog';
 import { ProjectEditDialog } from '@/components/layout/ProjectEditDialog';
@@ -44,7 +43,7 @@ import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useUpdateStore } from '@/stores/useUpdateStore';
 import { cn, formatDirectoryName, hasModifier } from '@/lib/utils';
 import { PROJECT_ICON_MAP, PROJECT_COLOR_MAP, getProjectIconImageUrl } from '@/lib/projectMeta';
-import { isDesktopLocalOriginActive, isDesktopShell, isTauriShell, requestDirectoryAccess } from '@/lib/desktop';
+import { isDesktopShell } from '@/lib/desktop';
 import { useLongPress } from '@/hooks/useLongPress';
 import { formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/shortcuts';
 import { sessionEvents } from '@/lib/sessionEvents';
@@ -468,7 +467,6 @@ export const NavRail: React.FC<NavRailProps> = ({ className, mobile }) => {
   const projects = useProjectsStore((s) => s.projects);
   const activeProjectId = useProjectsStore((s) => s.activeProjectId);
   const setActiveProjectIdOnly = useProjectsStore((s) => s.setActiveProjectIdOnly);
-  const addProject = useProjectsStore((s) => s.addProject);
   const removeProject = useProjectsStore((s) => s.removeProject);
   const reorderProjects = useProjectsStore((s) => s.reorderProjects);
   const updateProjectMeta = useProjectsStore((s) => s.updateProjectMeta);
@@ -551,7 +549,6 @@ export const NavRail: React.FC<NavRailProps> = ({ className, mobile }) => {
   } | null>(null);
 
   const isDesktopApp = React.useMemo(() => isDesktopShell(), []);
-  const tauriIpcAvailable = React.useMemo(() => isTauriShell(), []);
 
   const formatLabel = React.useCallback(
     (project: ProjectEntry): string => {
@@ -632,28 +629,8 @@ export const NavRail: React.FC<NavRailProps> = ({ className, mobile }) => {
   ]);
 
   const handleAddProject = React.useCallback(() => {
-    if (!tauriIpcAvailable || !isDesktopLocalOriginActive()) {
-      sessionEvents.requestDirectoryDialog();
-      return;
-    }
-    requestDirectoryAccess('')
-      .then((result) => {
-        if (result.success && result.path) {
-          const added = addProject(result.path, { id: result.projectId });
-          if (!added) {
-            toast.error('Failed to add project', {
-              description: 'Please select a valid directory.',
-            });
-          }
-        } else if (result.error && result.error !== 'Directory selection cancelled') {
-          toast.error('Failed to select directory', { description: result.error });
-        }
-      })
-      .catch((error) => {
-        console.error('Failed to select directory:', error);
-        toast.error('Failed to select directory');
-      });
-  }, [addProject, tauriIpcAvailable]);
+    sessionEvents.requestDirectoryDialog();
+  }, []);
 
   const handleEditProject = React.useCallback(
     (projectId: string) => {

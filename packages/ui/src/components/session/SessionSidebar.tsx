@@ -1,7 +1,6 @@
 import React from 'react';
 import type { Session } from '@opencode-ai/sdk/v2';
-import { toast } from '@/components/ui';
-import { isDesktopLocalOriginActive, isDesktopShell, isTauriShell } from '@/lib/desktop';
+import { isDesktopShell } from '@/lib/desktop';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
 import { sessionEvents } from '@/lib/sessionEvents';
 import { formatDirectoryName, cn } from '@/lib/utils';
@@ -240,7 +239,6 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
 
   const projects = useProjectsStore((state) => state.projects);
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
-  const addProject = useProjectsStore((state) => state.addProject);
   const removeProject = useProjectsStore((state) => state.removeProject);
   const setActiveProjectIdOnly = useProjectsStore((state) => state.setActiveProjectIdOnly);
   const renameProject = useProjectsStore((state) => state.renameProject);
@@ -305,7 +303,6 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   const openNewSessionDraft = useSessionStore((state) => state.openNewSessionDraft);
   const prStatusEntries = useGitHubPrStatusStore((state) => state.entries);
 
-  const tauriIpcAvailable = React.useMemo(() => isTauriShell(), []);
   const isDesktopShellRuntime = React.useMemo(() => isDesktopShell(), []);
 
   const isVSCode = React.useMemo(() => isVSCodeRuntime(), []);
@@ -464,32 +461,8 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   }, [deleteFolderConfirm, deleteFolder]);
 
   const handleOpenDirectoryDialog = React.useCallback(() => {
-    if (!tauriIpcAvailable || !isDesktopLocalOriginActive()) {
-      sessionEvents.requestDirectoryDialog();
-      return;
-    }
-
-    import('@/lib/desktop')
-      .then(({ requestDirectoryAccess }) => requestDirectoryAccess(''))
-      .then((result) => {
-        if (result.success && result.path) {
-          const added = addProject(result.path, { id: result.projectId });
-          if (!added) {
-            toast.error('Failed to add project', {
-              description: 'Please select a valid directory.',
-            });
-          }
-        } else if (result.error && result.error !== 'Directory selection cancelled') {
-          toast.error('Failed to select directory', {
-            description: result.error,
-          });
-        }
-      })
-      .catch((error) => {
-        console.error('Desktop: Error selecting directory:', error);
-        toast.error('Failed to select directory');
-      });
-  }, [addProject, tauriIpcAvailable]);
+    sessionEvents.requestDirectoryDialog();
+  }, []);
 
   const toggleParent = React.useCallback((sessionId: string) => {
     setExpandedParents((prev) => {

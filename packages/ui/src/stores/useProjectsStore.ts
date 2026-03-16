@@ -33,6 +33,8 @@ interface ProjectPathValidationResult {
   reason?: string;
 }
 
+const REMOTE_PROJECT_PROTOCOL_PATTERN = /^https?:\/\//i;
+
 interface ProjectsStore {
   projects: ProjectEntry[];
   activeProjectId: string | null;
@@ -92,6 +94,22 @@ const normalizeProjectPath = (value: string): string => {
     return '';
   }
 
+  if (REMOTE_PROJECT_PROTOCOL_PATTERN.test(trimmed)) {
+    try {
+      const url = new URL(trimmed);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return '';
+      }
+      url.hash = '';
+      if (url.pathname !== '/') {
+        url.pathname = url.pathname.replace(/\/+$/, '') || '/';
+      }
+      return url.toString();
+    } catch {
+      return '';
+    }
+  }
+
   const homeDirectory = safeStorage.getItem('homeDirectory') || useDirectoryStore.getState().homeDirectory || '';
   const expanded = resolveTildePath(trimmed, homeDirectory);
 
@@ -107,10 +125,20 @@ const deriveProjectLabel = (path: string): string => {
   if (!normalized || normalized === '/') {
     return 'Root';
   }
+  if (REMOTE_PROJECT_PROTOCOL_PATTERN.test(normalized)) {
+    try {
+      const url = new URL(normalized);
+      return url.host || normalized;
+    } catch {
+      return normalized;
+    }
+  }
   const segments = normalized.split('/').filter(Boolean);
   const raw = segments[segments.length - 1] || normalized;
   return raw.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 };
+
+const isRemoteProjectTarget = (path: string): boolean => REMOTE_PROJECT_PROTOCOL_PATTERN.test(path.trim());
 
 const createProjectId = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -346,12 +374,12 @@ export const useProjectsStore = create<ProjectsStore>()(
 
     validateProjectPath: (path: string): ProjectPathValidationResult => {
       if (typeof path !== 'string' || path.trim().length === 0) {
-        return { ok: false, reason: 'Provide a directory path.' };
+        return { ok: false, reason: 'Provide a directory path or OpenCode URL.' };
       }
 
       const normalized = normalizeProjectPath(path);
       if (!normalized) {
-        return { ok: false, reason: 'Directory path cannot be empty.' };
+        return { ok: false, reason: 'Invalid directory path or OpenCode URL.' };
       }
 
       return { ok: true, normalizedPath: normalized };
@@ -397,7 +425,9 @@ export const useProjectsStore = create<ProjectsStore>()(
       }
 
       get().setActiveProject(entry.id);
-      void get().discoverProjectIcon(entry.id);
+      if (!isRemoteProjectTarget(entry.path)) {
+        void get().discoverProjectIcon(entry.id);
+      }
       return entry;
     },
 
@@ -419,6 +449,12 @@ export const useProjectsStore = create<ProjectsStore>()(
       if (nextActiveId) {
         const nextActive = nextProjects.find((project) => project.id === nextActiveId);
         if (nextActive) {
+          if (isRemoteProjectTarget(nextActive.path)) {
+            if (typeof window !== 'undefined') {
+              window.location.assign(nextActive.path);
+            }
+            return;
+          }
           opencodeClient.setDirectory(nextActive.path);
           useDirectoryStore.getState().setDirectory(nextActive.path, { showOverlay: false });
         }
@@ -447,6 +483,13 @@ export const useProjectsStore = create<ProjectsStore>()(
 
       set({ projects: nextProjects, activeProjectId: id });
       persistProjects(nextProjects, id);
+
+      if (isRemoteProjectTarget(target.path)) {
+        if (typeof window !== 'undefined') {
+          window.location.assign(target.path);
+        }
+        return;
+      }
 
       opencodeClient.setDirectory(target.path);
       useDirectoryStore.getState().setDirectory(target.path, { showOverlay: false });
@@ -674,7 +717,7 @@ export const useProjectsStore = create<ProjectsStore>()(
 
       if (incomingActive) {
         const activeProject = incomingProjects.find((project) => project.id === incomingActive);
-        if (activeProject) {
+        if (activeProject && !isRemoteProjectTarget(activeProject.path)) {
           opencodeClient.setDirectory(activeProject.path);
           useDirectoryStore.getState().setDirectory(activeProject.path, { showOverlay: false });
         }
