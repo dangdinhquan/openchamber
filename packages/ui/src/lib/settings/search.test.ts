@@ -19,6 +19,19 @@ const runtimeCtx = {
 };
 
 describe('settings search', () => {
+  test('finds the Agents Catalog only outside VS Code', () => {
+    for (const isVSCode of [false, true]) {
+      const results = buildSettingsSearchResults({
+        query: 'agents repository',
+        runtimeCtx: { ...runtimeCtx, isVSCode },
+        t,
+        getPageTitle: (page) => page,
+      });
+
+      expect(results.some((result) => result.page === 'agents.catalog')).toBe(!isVSCode);
+    }
+  });
+
   test('finds the Claude Code integration by name and package, never in VS Code', () => {
     for (const query of ['claude', '@openchamber/opencode-claude']) {
       for (const isVSCode of [false, true]) {

@@ -907,6 +907,16 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
     }
   }
 
+  if (pathname.startsWith('/api/config/agents-catalog/')) {
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: { kind: 'unsupported', message: 'Git agent catalog is not supported in the VS Code runtime' },
+      }),
+      { status: 501, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
   // Skills CRUD: /api/config/skills/:name or /api/config/skills
   if (pathname === '/api/config/skills') {
     try {

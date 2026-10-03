@@ -705,6 +705,12 @@ headers }` or v1 `{ npm, options }`. The stored entry is always a
   - Snippets: `/api/config/snippets`, `/api/config/snippets/:name`, and `/api/config/snippets/expand`
 - Agent/command/MCP write routes persist config to disk and return plain success. OpenCode 2 watches those files and rebuilds the affected entity itself, so there is nothing left to apply.
 
+## Agent catalog
+- `registerAgentsCatalogRoutes(app, dependencies)` registers Git scan and install routes under `/api/config/agents-catalog/*`, separate from `/api/config/agents/:name`.
+- Scans read regular Markdown blobs under a validated repository subpath, parse YAML frontmatter, and cap the scan at 200 files and 1 MiB per file. Symlink blobs and invalid agent definitions are skipped.
+- Install re-reads the selected file from the repository, accepts only OpenCode agent metadata fields, and creates a user-global agent through `createAgent`. Existing agent names return `409`; installed agents are never overwritten.
+- The web, Electron, hosted-mobile, and Capacitor-mobile surfaces use the OpenChamber server routes. The VS Code webview returns `501` because its extension runtime does not own the user-global OpenCode config.
+
 ## Public exports (config-mutation-response.js)
 - `buildAppliedResponse(message, details?)`: success payload for a config mutation that is already live (`{ success: true, message }`, no restart flags). `details` carries the file the write landed in (`{ path, scope, source }`) so the caller can name the config file that changed, including a v1 file rewritten in place in v2 shape.
 - `buildExternalManualRestartResponse(message)`: success payload when OpenCode is an external process and the operator must restart it manually (`requiresManualRestart: true`).

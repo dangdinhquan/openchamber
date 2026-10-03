@@ -1122,6 +1122,13 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     keywords: ['external repository', 'add source', 'catalog'],
   },
   {
+    id: 'agents.catalog.source',
+    page: 'agents.catalog',
+    titleKey: 'settings.skills.catalog.installFromRepo.title',
+    keywords: ['agent', 'agents', 'git', 'repository', 'catalog', 'install'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
     id: 'magic-prompts.visible-prompt',
     page: 'magic-prompts',
     titleKey: 'settings.magicPrompts.page.block.visiblePrompt',

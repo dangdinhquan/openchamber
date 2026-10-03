@@ -17,6 +17,7 @@ export type SettingsPageSlug =
   | 'plugins'
   | 'skills.installed'
   | 'skills.catalog'
+  | 'agents.catalog'
   | 'git'
   | 'appearance'
   | 'chat'
@@ -162,6 +163,14 @@ export const SETTINGS_PAGE_METADATA: readonly SettingsPageMeta[] = [
     group: 'content',
     kind: 'single',
     keywords: ['install', 'catalog', 'external', 'repository', 'skills catalog'],
+  },
+  {
+    slug: 'agents.catalog',
+    title: 'Agents Catalog',
+    group: 'content',
+    kind: 'single',
+    keywords: ['agents', 'catalog', 'git', 'repository', 'install', 'remote'],
+    isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
     slug: 'git',
@@ -332,6 +341,8 @@ export function getSettingsNavIcon(slug: SettingsPageSlug): IconName | null {
       return 'book-open';
     case 'skills.catalog':
       return 'book';
+    case 'agents.catalog':
+      return 'robot-2';
 
     case 'git':
       return 'git-branch';

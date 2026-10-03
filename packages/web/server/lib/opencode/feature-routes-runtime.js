@@ -28,6 +28,8 @@ import { registerOpenChamberSessionRoutes } from '../openchamber-sessions/routes
 import { registerOpenChamberControlRoutes } from '../openchamber-control/routes.js';
 import { registerMarkdownImageGrantRoutes } from '../markdown-image-grants/routes.js';
 import { registerSkillRoutes } from './skill-routes.js';
+import { registerAgentsCatalogRoutes } from '../agents-catalog/routes.js';
+import { readAgentFromRepository, scanAgentsRepository } from '../agents-catalog/repository.js';
 import { registerPluginRoutes } from './plugin-routes.js';
 import { getNpmInfo, clearCache as clearNpmCache } from './npm-registry.js';
 import { parseNpmSpec, parsePathSpec, isExactSemver } from './plugin-spec.js';
@@ -50,7 +52,7 @@ import {
   encodePluginId,
   decodePluginId,
 } from './plugins.js';
-import { SKILL_DIR, SKILL_SCOPE, readSkillSupportingFile, writeSkillSupportingFile, deleteSkillSupportingFile } from './shared.js';
+import { AGENT_SCOPE, SKILL_DIR, SKILL_SCOPE, readSkillSupportingFile, writeSkillSupportingFile, deleteSkillSupportingFile } from './shared.js';
 import { getSkillSources, discoverSkills, mergeDiscoveredSkills, createSkill, updateSkill, deleteSkill, renameSkill, isManagedSkillPath } from './skills.js';
 import { getCuratedSkillsSources } from '../skills-catalog/curated-sources.js';
 import { getCacheKey, scanWithCache } from '../skills-catalog/cache.js';
@@ -325,6 +327,13 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       fetchGitHubRepoMetas,
       getProfiles,
       getProfile,
+    });
+    registerAgentsCatalogRoutes(app, {
+      createAgent,
+      AGENT_SCOPE,
+      getProfile,
+      readAgentFromRepository,
+      scanAgentsRepository,
     });
 
     registerQuotaRoutes(app, { getQuotaProviders });

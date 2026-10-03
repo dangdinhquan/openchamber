@@ -109,6 +109,7 @@ const MOBILE_SETTINGS_PAGES = [
   'plugins',
   'skills.installed',
   'skills.catalog',
+  'agents.catalog',
   'providers',
   'web-search',
   'usage',

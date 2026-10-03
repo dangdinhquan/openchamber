@@ -28,6 +28,7 @@ import { PluginsPage } from '@/components/sections/plugins';
 import { usePluginsStore } from '@/stores/usePluginsStore';
 import { SkillsSidebar } from '@/components/sections/skills/SkillsSidebar';
 import { SkillsPage } from '@/components/sections/skills/SkillsPage';
+import { AgentsCatalogPage } from '@/components/sections/agents/catalog/AgentsCatalogPage';
 import { ProjectsSidebar } from '@/components/sections/projects/ProjectsSidebar';
 import { ProjectsPage } from '@/components/sections/projects/ProjectsPage';
 import { RemoteInstancesPage } from '@/components/sections/remote-instances/RemoteInstancesPage';
@@ -125,6 +126,7 @@ const pageOrder: SettingsPageSlug[] = [
   'snippets',
   'skills.installed',
   'skills.catalog',
+  'agents.catalog',
 ];
 
 const NAV_GROUP_ORDER = ['general', 'projects', 'opencode', 'content'] as const;
@@ -363,6 +365,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return t('settings.page.skills.title');
       case 'skills.catalog':
         return t('settings.page.skillsCatalog.title');
+      case 'agents.catalog':
+        return t('settings.page.agentsCatalog.title');
       case 'git':
         return t('settings.page.git.title');
       case 'integrations':
@@ -686,6 +690,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return <SkillsPage view="installed" />;
       case 'skills.catalog':
         return <SkillsPage view="catalog" />;
+      case 'agents.catalog':
+        return <AgentsCatalogPage />;
       case 'providers':
         return <ProvidersPage />;
       case 'web-search':
