@@ -328,12 +328,16 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getProfiles,
       getProfile,
     });
-    registerAgentsCatalogRoutes(app, {
+    await registerAgentsCatalogRoutes(app, {
       createAgent,
+      deleteAgent,
+      getAgentConfig,
       AGENT_SCOPE,
       getProfile,
       readAgentFromRepository,
       scanAgentsRepository,
+      updateAgent,
+      openchamberDataDir,
     });
 
     registerQuotaRoutes(app, { getQuotaProviders });

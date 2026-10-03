@@ -4,8 +4,8 @@ One directory per Settings page. `shared/` holds the page chrome and controls
 every page is built from; see `.agents/skills/settings-ui-patterns/SKILL.md` for
 which primitive to reach for.
 
-The Library group includes a separate Agents Catalog page. It scans an
-explicit Git repository path and installs selected agent Markdown into the
+The OpenCode group includes an Agents Catalog page directly below Agents. It
+scans Git repositories for agent Markdown and supports scheduled sync into the
 user-global OpenCode config.
 
 ## Autosave on the OpenCode configuration pages

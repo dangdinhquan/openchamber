@@ -117,6 +117,7 @@ const pageOrder: SettingsPageSlug[] = [
   'providers',
   'web-search',
   'agents',
+  'agents.catalog',
   'behavior',
   'commands',
   'mcp',
@@ -126,7 +127,6 @@ const pageOrder: SettingsPageSlug[] = [
   'snippets',
   'skills.installed',
   'skills.catalog',
-  'agents.catalog',
 ];
 
 const NAV_GROUP_ORDER = ['general', 'projects', 'opencode', 'content'] as const;
@@ -414,6 +414,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
   }, [getPageTitle, isDesktopLocalOrigin, isMac, isWindows, isLinux, runtimeCtx, settingsSearchQuery, t, visiblePageSlugs]);
 
   const prepareSettingsSearchTarget = React.useCallback((result: SettingsSearchResult): string => {
+    if (result.id === 'agents.catalog.source' || result.id === 'agents.catalog.sync.sources') {
+      return result.id;
+    }
+
     if (result.id.startsWith('agents.')) {
       const store = useAgentsStore.getState();
       const name = nextUniqueName('new-agent', store.agents.map((agent) => agent.name));
@@ -691,7 +695,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
       case 'skills.catalog':
         return <SkillsPage view="catalog" />;
       case 'agents.catalog':
-        return <AgentsCatalogPage />;
+        return <AgentsCatalogPage searchTargetId={pendingSearchItemId} />;
       case 'providers':
         return <ProvidersPage />;
       case 'web-search':
@@ -732,7 +736,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
       default:
         return null;
     }
-  }, [openChamberSectionBySlug, renderUnavailable, runtimeCtx, t]);
+  }, [openChamberSectionBySlug, pendingSearchItemId, renderUnavailable, runtimeCtx, t]);
 
   // Mobile: if opened via deep-link / palette to a non-home page, jump into it once.
   React.useEffect(() => {

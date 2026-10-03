@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -53,7 +54,7 @@ const refSchema = z.string().max(255)
     && !value.endsWith('.'));
 
 function normalizeSubpath(value) {
-  if (value === undefined || value.trim() === '') return 'agents';
+  if (value === undefined || value.trim() === '') return '';
   const normalized = value.trim().replaceAll('\\', '/').replace(/^\/+|\/+$/g, '');
   const segments = normalized.split('/');
   if (normalized.length > 240 || segments.some((segment) => !segment || segment === '.' || segment === '..')) {
@@ -80,14 +81,22 @@ function parseAgentMarkdown(content, filePath) {
   const name = path.posix.basename(input.filePath, '.md');
   const parsedDescription = z.string().safeParse(frontmatter.description);
   const description = parsedDescription.success ? parsedDescription.data : '';
+  const parsedConfig = agentFrontmatterSchema.safeParse(frontmatter);
+  const config = parsedConfig.success
+    ? Object.fromEntries(
+      Object.entries(parsedConfig.data).filter(([key]) => AGENT_CONFIG_KEYS.has(key)),
+    )
+    : null;
+  if (config) config.system = match[2].trim();
   return {
     ok: true,
     item: {
       name,
       path: input.filePath,
       description,
-      installable: agentNameSchema.safeParse(name).success && agentFrontmatterSchema.safeParse(frontmatter).success,
+      installable: agentNameSchema.safeParse(name).success && config !== null,
     },
+    config,
   };
 }
 
@@ -101,7 +110,8 @@ function listAgentMarkdownPaths(treeOutput, subpath) {
       const [mode, type] = entry.slice(0, separator).split(' ');
       const filePath = entry.slice(separator + 1);
       if (type !== 'blob' || (mode !== '100644' && mode !== '100755') || !filePath.endsWith('.md')) return null;
-      if (!filePath.startsWith(`${subpath}/`) || filePath.split('/').some((segment) => segment === '.' || segment === '..')) return null;
+      if ((subpath && !filePath.startsWith(`${subpath}/`))
+        || filePath.split('/').some((segment) => segment === '.' || segment === '..')) return null;
       return filePath;
     })
     .filter((filePath) => filePath !== null)
@@ -140,7 +150,7 @@ async function cloneRepo(cloneUrl, tempDir, identity, git, ref) {
   return { ok: true };
 }
 
-export async function scanAgentsRepository({ source, subpath, ref, identity, git = runGit } = {}) {
+export async function scanAgentsRepository({ source, subpath, ref, identity, includeDefinitions = false, git = runGit } = {}) {
   const gitCheck = await assertGitAvailable();
   if (!gitCheck.ok) return { ok: false, error: gitCheck.error };
 
@@ -152,7 +162,7 @@ export async function scanAgentsRepository({ source, subpath, ref, identity, git
   if (!parsed.ok) return { ok: false, error: parsed.error };
 
   const effectiveSubpath = normalizeSubpath(input.data.subpath);
-  if (!effectiveSubpath) {
+  if (effectiveSubpath === null) {
     return { ok: false, error: { kind: 'invalidSource', message: 'Invalid repository path' } };
   }
   if (input.data.ref && !refSchema.safeParse(input.data.ref).success) {
@@ -175,7 +185,9 @@ export async function scanAgentsRepository({ source, subpath, ref, identity, git
       };
     }
 
-    const tree = await git(['-C', tempDir, 'ls-tree', '-r', '-z', 'HEAD', '--', effectiveSubpath], {
+    const treeArgs = ['-C', tempDir, 'ls-tree', '-r', '-z', 'HEAD'];
+    if (effectiveSubpath) treeArgs.push('--', effectiveSubpath);
+    const tree = await git(treeArgs, {
       identity: input.data.identity,
       timeoutMs: 30_000,
     });
@@ -190,6 +202,7 @@ export async function scanAgentsRepository({ source, subpath, ref, identity, git
     }
 
     const items = [];
+    const definitions = [];
     const failures = [];
     let index = 0;
     const readNext = async () => {
@@ -211,6 +224,14 @@ export async function scanAgentsRepository({ source, subpath, ref, identity, git
         const parsedAgent = parseAgentMarkdown(blob.stdout, filePath);
         if (parsedAgent.ok) {
           items.push(parsedAgent.item);
+          if (parsedAgent.item.installable && parsedAgent.config) {
+            definitions.push({
+              name: parsedAgent.item.name,
+              path: parsedAgent.item.path,
+              config: parsedAgent.config,
+              remoteHash: createHash('sha256').update(blob.stdout).digest('hex'),
+            });
+          }
         } else {
           failures.push(filePath);
         }
@@ -227,13 +248,30 @@ export async function scanAgentsRepository({ source, subpath, ref, identity, git
       if (nameCounts.get(item.name) > 1) item.installable = false;
     }
 
-    return {
+    const response = {
       ok: true,
       normalizedRepo: parsed.normalizedRepo,
       subpath: effectiveSubpath,
       items,
       skippedFiles: failures.length,
     };
+    if (includeDefinitions) {
+      const commit = await git(['-C', tempDir, 'rev-parse', 'HEAD'], {
+        identity: input.data.identity,
+        timeoutMs: 15_000,
+      });
+      if (!commit.ok) {
+        return { ok: false, error: { kind: 'networkError', message: commit.stderr || 'Failed to resolve repository commit' } };
+      }
+      const installablePaths = new Set(items.filter((item) => item.installable).map((item) => item.path));
+      return {
+        ...response,
+        commit: commit.stdout.trim(),
+        definitions: definitions.filter((definition) => installablePaths.has(definition.path)),
+      };
+    }
+
+    return response;
   } finally {
     await removeTempDir(tempDir);
   }
@@ -249,7 +287,7 @@ export async function readAgentFromRepository({ source, subpath, ref, agentPath,
   const gitCheck = await assertGitAvailable();
   if (!gitCheck.ok) return { ok: false, error: gitCheck.error };
   const effectiveSubpath = normalizeSubpath(input.data.subpath);
-  if (!effectiveSubpath || !input.data.agentPath.startsWith(`${effectiveSubpath}/`)) {
+  if (effectiveSubpath === null || (effectiveSubpath && !input.data.agentPath.startsWith(`${effectiveSubpath}/`))) {
     return { ok: false, error: { kind: 'invalidSource', message: 'Invalid agent file path' } };
   }
   if (input.data.ref && !refSchema.safeParse(input.data.ref).success) {
@@ -274,7 +312,9 @@ export async function readAgentFromRepository({ source, subpath, ref, agentPath,
           : { kind: 'networkError', message: message || 'Failed to clone repository' },
       };
     }
-    const listing = await git(['-C', tempDir, 'ls-tree', '-r', '-z', 'HEAD', '--', effectiveSubpath], {
+    const listingArgs = ['-C', tempDir, 'ls-tree', '-r', '-z', 'HEAD'];
+    if (effectiveSubpath) listingArgs.push('--', effectiveSubpath);
+    const listing = await git(listingArgs, {
       identity: input.data.identity,
       timeoutMs: 15_000,
       maxBuffer: 4 * 1024 * 1024,

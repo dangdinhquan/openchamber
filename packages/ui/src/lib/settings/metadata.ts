@@ -167,7 +167,7 @@ export const SETTINGS_PAGE_METADATA: readonly SettingsPageMeta[] = [
   {
     slug: 'agents.catalog',
     title: 'Agents Catalog',
-    group: 'content',
+    group: 'opencode',
     kind: 'single',
     keywords: ['agents', 'catalog', 'git', 'repository', 'install', 'remote'],
     isAvailable: (ctx) => !ctx.isVSCode,

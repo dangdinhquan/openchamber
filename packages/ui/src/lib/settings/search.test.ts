@@ -32,6 +32,17 @@ describe('settings search', () => {
     }
   });
 
+  test('finds the Agents Catalog sync sources section', () => {
+    const results = buildSettingsSearchResults({
+      query: 'scheduled sync',
+      runtimeCtx,
+      t,
+      getPageTitle: (page) => page,
+    });
+
+    expect(results.some((result) => result.id === 'agents.catalog.sync.sources')).toBe(true);
+  });
+
   test('finds the Claude Code integration by name and package, never in VS Code', () => {
     for (const query of ['claude', '@openchamber/opencode-claude']) {
       for (const isVSCode of [false, true]) {

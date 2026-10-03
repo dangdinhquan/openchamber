@@ -1124,8 +1124,15 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
   {
     id: 'agents.catalog.source',
     page: 'agents.catalog',
-    titleKey: 'settings.skills.catalog.installFromRepo.title',
+    titleKey: 'settings.agents.catalog.scan.title',
     keywords: ['agent', 'agents', 'git', 'repository', 'catalog', 'install'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    id: 'agents.catalog.sync.sources',
+    page: 'agents.catalog',
+    titleKey: 'settings.agents.catalog.sync.title',
+    keywords: ['agents', 'git', 'repository', 'sync', 'scheduled', 'source'],
     isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
