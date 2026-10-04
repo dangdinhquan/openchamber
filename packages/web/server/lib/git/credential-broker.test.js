@@ -3,6 +3,7 @@ import http from 'node:http';
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createGitCredentialBroker } from './credential-broker.js';
+import { runGit } from '../skills-catalog/git.js';
 
 const brokers = [];
 
@@ -45,6 +46,33 @@ const runProcess = (executable, args, input, env = {}) => new Promise((resolve, 
 });
 
 describe('Git credential broker', () => {
+  it('configures managed HTTPS Git through the broker without exposing the token', async () => {
+    const password = 'catalog-private-token';
+    const credentialResolver = {
+      resolve: vi.fn(async ({ endpoint }) => ({
+        mode: 'managed',
+        transport: 'https',
+        username: 'x-access-token',
+        password,
+        allowedEndpoint: endpoint,
+      })),
+    };
+
+    const result = await runGit(['config', '--get', 'credential.helper'], {
+      identity: {
+        credentialId: 'managed-account-reference',
+        endpoint: 'https://example.com/owner/private.git',
+      },
+      credentialResolver,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain('credential-helper.js');
+    expect(result.stdout).not.toContain(password);
+    expect(result.stderr).not.toContain(password);
+    expect(credentialResolver.resolve).toHaveBeenCalledOnce();
+  });
+
   it('serves one exact credential through the helper without putting the token in args or snapshots', async () => {
     const broker = createGitCredentialBroker();
     brokers.push(broker);

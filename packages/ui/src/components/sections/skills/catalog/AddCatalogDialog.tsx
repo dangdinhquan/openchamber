@@ -26,6 +26,8 @@ import type { SkillCatalogConfig } from '@/lib/desktop';
 import { useSkillsCatalogStore } from '@/stores/useSkillsCatalogStore';
 import { useGitIdentitiesStore } from '@/stores/useGitIdentitiesStore';
 import { useI18n } from '@/lib/i18n';
+import { isCompleteIdentity } from '@/lib/api/git-identity';
+import { identityDisplayName, selectableIdentities } from '@/lib/source-control/identity';
 
 const generateCatalogId = () => `custom:${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
@@ -55,17 +57,20 @@ type IdentityOption = { id: string; name: string };
 interface AddCatalogDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  catalogId?: string | null;
 }
 
-export const AddCatalogDialog: React.FC<AddCatalogDialogProps> = ({ open, onOpenChange }) => {
+export const AddCatalogDialog: React.FC<AddCatalogDialogProps> = ({ open, onOpenChange, catalogId = null }) => {
   const { t } = useI18n();
   const scanRepo = useSkillsCatalogStore((s) => s.scanRepo);
   const loadCatalog = useSkillsCatalogStore((s) => s.loadCatalog);
   const loadSource = useSkillsCatalogStore((s) => s.loadSource);
   const setSelectedSource = useSkillsCatalogStore((s) => s.setSelectedSource);
   const isScanning = useSkillsCatalogStore((s) => s.isScanning);
-  const defaultGitIdentityId = useGitIdentitiesStore((s) => s.defaultGitIdentityId);
-  const loadDefaultGitIdentityId = useGitIdentitiesStore((s) => s.loadDefaultGitIdentityId);
+  const gitIdentityProfiles = useGitIdentitiesStore((s) => s.profiles);
+  const globalGitIdentity = useGitIdentitiesStore((s) => s.globalIdentity);
+  const loadGitIdentityProfiles = useGitIdentitiesStore((s) => s.loadProfiles);
+  const loadGlobalGitIdentity = useGitIdentitiesStore((s) => s.loadGlobalIdentity);
 
   const [label, setLabel] = React.useState('');
   const [source, setSource] = React.useState('');
@@ -81,20 +86,19 @@ export const AddCatalogDialog: React.FC<AddCatalogDialogProps> = ({ open, onOpen
   const [identityOptions, setIdentityOptions] = React.useState<IdentityOption[]>([]);
   const [gitIdentityId, setGitIdentityId] = React.useState<string | null>(null);
   const scanRequestIdRef = React.useRef(0);
+  const identityLoadRequestIdRef = React.useRef(0);
 
-  const invalidateScan = React.useCallback((options?: { clearIdentity?: boolean }) => {
+  const invalidateScan = React.useCallback(() => {
     scanRequestIdRef.current += 1;
     setScanOk(false);
     setScanCount(null);
-    if (options?.clearIdentity) {
-      setIdentityOptions([]);
-      setGitIdentityId(null);
-    }
+    setIdentityOptions([]);
   }, []);
 
   React.useEffect(() => {
     if (!open) return;
 
+    const identityLoadRequestId = ++identityLoadRequestIdRef.current;
     scanRequestIdRef.current += 1;
     setLabel('');
     setSource('');
@@ -103,25 +107,59 @@ export const AddCatalogDialog: React.FC<AddCatalogDialogProps> = ({ open, onOpen
     setScanOk(false);
     setIdentityOptions([]);
     setGitIdentityId(null);
-    void loadDefaultGitIdentityId();
+    void Promise.all([
+      loadGitIdentityProfiles(),
+      loadGlobalGitIdentity(),
+    ]);
 
     setExistingCatalogs(null);
     void (async () => {
       const settings = await loadDesktopSettings();
-      setExistingCatalogs(settings ? settings.skillCatalogs ?? [] : null);
+      if (identityLoadRequestIdRef.current !== identityLoadRequestId) return;
+      const catalogs = settings ? settings.skillCatalogs ?? [] : null;
+      setExistingCatalogs(catalogs);
+      if (!catalogs || !catalogId) return;
+
+      const catalog = catalogs.find((entry) => entry.id === catalogId);
+      if (!catalog) return;
+      setLabel(catalog.label);
+      setSource(catalog.source);
+      setSubpath(catalog.subpath ?? '');
+      setGitIdentityId(catalog.gitIdentityId ?? null);
+      setScanOk(false);
     })();
-  }, [open, loadDefaultGitIdentityId]);
+    return () => {
+      identityLoadRequestIdRef.current += 1;
+      scanRequestIdRef.current += 1;
+    };
+  }, [open, catalogId, loadGitIdentityProfiles, loadGlobalGitIdentity]);
+
+  const availableIdentities = React.useMemo(() => {
+    const options = new Map(identityOptions.map((identity) => [identity.id, identity]));
+    for (const identity of selectableIdentities(
+      gitIdentityProfiles.filter((profile) => profile.transport !== 'anonymous'),
+      globalGitIdentity,
+      isCompleteIdentity,
+    )) {
+      options.set(identity.id, {
+        id: identity.id,
+        name: identityDisplayName(identity, (key) => t(key)),
+      });
+    }
+    return [...options.values()];
+  }, [gitIdentityProfiles, globalGitIdentity, identityOptions, t]);
 
   const isDuplicate = React.useMemo(() => {
     const normalizedSource = source.trim();
     const normalizedSubpath = subpath.trim();
 
     return (existingCatalogs ?? []).some((c) => {
+      if (c.id === catalogId) return false;
       const s = (c.source || '').trim();
       const sp = (c.subpath || '').trim();
       return s === normalizedSource && sp === normalizedSubpath;
     });
-  }, [existingCatalogs, source, subpath]);
+  }, [catalogId, existingCatalogs, source, subpath]);
 
   const handleScan = async () => {
     const trimmedSource = source.trim();
@@ -156,17 +194,8 @@ export const AddCatalogDialog: React.FC<AddCatalogDialogProps> = ({ open, onOpen
           return;
         }
 
-        const ids = (result.error.identities || []) as IdentityOption[];
+        const ids = result.error.identities || [];
         setIdentityOptions(ids);
-        if (!gitIdentityId && ids.length > 0) {
-          const preferred =
-            defaultGitIdentityId &&
-            defaultGitIdentityId !== 'global' &&
-            ids.some((i) => i.id === defaultGitIdentityId)
-              ? defaultGitIdentityId
-              : ids[0].id;
-          setGitIdentityId(preferred);
-        }
         toast.error(t('settings.skills.catalog.add.toast.authenticationRequiredScan'));
         return;
       }
@@ -203,7 +232,10 @@ export const AddCatalogDialog: React.FC<AddCatalogDialogProps> = ({ open, onOpen
       return;
     }
 
-    if (!scanOk) {
+    const original = existingCatalogs?.find((catalog) => catalog.id === catalogId);
+    const sourceChanged = !catalogId || !original || original.source !== trimmedSource
+      || (original.subpath ?? '') !== trimmedSubpath || (original.gitIdentityId ?? null) !== gitIdentityId;
+    if (sourceChanged && !scanOk) {
       toast.error(t('settings.skills.catalog.add.toast.scanBeforeAdd'));
       return;
     }
@@ -214,18 +246,24 @@ export const AddCatalogDialog: React.FC<AddCatalogDialogProps> = ({ open, onOpen
     }
 
     const next: SkillCatalogConfig = {
-      id: generateCatalogId(),
+      id: catalogId ?? generateCatalogId(),
       label: trimmedLabel,
       source: trimmedSource,
-      ...(trimmedSubpath ? { subpath: trimmedSubpath } : {}),
-      ...(gitIdentityId ? { gitIdentityId } : {}),
     };
+    if (trimmedSubpath) next.subpath = trimmedSubpath;
+    if (gitIdentityId) next.gitIdentityId = gitIdentityId;
 
     if (existingCatalogs === null) {
       toast.error(t('settings.skills.catalog.add.toast.saveFailed'));
       return;
     }
-    const updated = [...existingCatalogs, next];
+    if (catalogId && !original) {
+      toast.error(t('settings.skills.catalog.add.toast.saveFailed'));
+      return;
+    }
+    const updated = catalogId
+      ? existingCatalogs.map((catalog) => catalog.id === catalogId ? next : catalog)
+      : [...existingCatalogs, next];
 
     try {
       const saved = await updateDesktopSettings({ skillCatalogs: updated });
@@ -233,9 +271,7 @@ export const AddCatalogDialog: React.FC<AddCatalogDialogProps> = ({ open, onOpen
         throw new Error(t('settings.skills.catalog.add.toast.saveFailed'));
       }
       setExistingCatalogs(updated);
-      toast.success(t('settings.skills.catalog.add.toast.catalogAdded'));
-      await loadCatalog({ refresh: true });
-      await loadSource(next.id, { refresh: true });
+      if (await loadCatalog({ refresh: true })) await loadSource(next.id, { refresh: true });
       setSelectedSource(next.id);
       onOpenChange(false);
     } catch (error) {
@@ -247,7 +283,7 @@ export const AddCatalogDialog: React.FC<AddCatalogDialogProps> = ({ open, onOpen
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>{t('settings.skills.catalog.add.title')}</DialogTitle>
+          <DialogTitle>{catalogId ? t('settings.skills.catalog.page.title') : t('settings.skills.catalog.add.title')}</DialogTitle>
           <DialogDescription>
             {t('settings.skills.catalog.add.descriptionPrefix')}
             {' '}
@@ -271,7 +307,7 @@ export const AddCatalogDialog: React.FC<AddCatalogDialogProps> = ({ open, onOpen
               value={source}
               onChange={(e) => {
                 setSource(e.target.value);
-                invalidateScan({ clearIdentity: true });
+                invalidateScan();
               }}
               placeholder={t('settings.skills.catalog.shared.field.repositoryPlaceholder')}
             />
@@ -283,31 +319,34 @@ export const AddCatalogDialog: React.FC<AddCatalogDialogProps> = ({ open, onOpen
               value={subpath}
               onChange={(e) => {
                 setSubpath(e.target.value);
-                invalidateScan({ clearIdentity: true });
+                invalidateScan();
               }}
               placeholder={t('settings.skills.catalog.shared.field.subpathPlaceholder')}
             />
           </div>
 
-          {identityOptions.length > 0 && !isVSCodeRuntime() ? (
+          {(availableIdentities.length > 0 || gitIdentityId) && !isVSCodeRuntime() ? (
             <div className="space-y-2">
-              <div className="flex items-center">
-                <span className="typography-ui-label text-[var(--status-warning)]">{t('settings.skills.catalog.shared.auth.title')}</span>
-                <span className="typography-meta text-muted-foreground ml-2">{t('settings.skills.catalog.shared.auth.description')}</span>
-                <SettingsInfoHint className="ml-1">{t('settings.skills.catalog.shared.auth.footerHint')}</SettingsInfoHint>
+              <div className="flex items-center gap-1">
+                <span className="typography-ui-label text-foreground">{t('settings.skills.catalog.shared.auth.description')}</span>
+                <SettingsInfoHint>{t('settings.skills.catalog.shared.auth.footerHint')}</SettingsInfoHint>
               </div>
               <Select
-                value={gitIdentityId || ''}
+                value={gitIdentityId || 'none'}
                 onValueChange={(v) => {
-                  setGitIdentityId(v);
+                  setGitIdentityId(v === 'none' ? null : v);
                   invalidateScan();
                 }}
               >
-                <SelectTrigger className="w-fit">
-                  <span>{identityOptions.find((i) => i.id === gitIdentityId)?.name || t('settings.skills.catalog.shared.auth.chooseIdentity')}</span>
+                <SelectTrigger className="w-fit" aria-label={t('settings.skills.catalog.shared.auth.description')}>
+                  <span>{availableIdentities.find((i) => i.id === gitIdentityId)?.name || (gitIdentityId ?? t('settings.gitIdentities.editor.auth.anonymous'))}</span>
                 </SelectTrigger>
                 <SelectContent align="start">
-                  {identityOptions.map((id) => (
+                  <SelectItem value="none">{t('settings.gitIdentities.editor.auth.anonymous')}</SelectItem>
+                  {gitIdentityId && !availableIdentities.some((identity) => identity.id === gitIdentityId) && (
+                    <SelectItem value={gitIdentityId} disabled>{gitIdentityId}</SelectItem>
+                  )}
+                  {availableIdentities.map((id) => (
                     <SelectItem key={id.id} value={id.id}>
                       {id.name}
                     </SelectItem>
@@ -347,9 +386,14 @@ export const AddCatalogDialog: React.FC<AddCatalogDialogProps> = ({ open, onOpen
           <Button
             size="sm"
             onClick={() => void handleAdd()}
-            disabled={!scanOk || isDuplicate || existingCatalogs === null || !label.trim() || !source.trim()}
+            disabled={isDuplicate || existingCatalogs === null || !label.trim() || !source.trim() || (
+              (!catalogId || !existingCatalogs.some((catalog) => catalog.id === catalogId
+                && catalog.source === source.trim()
+                && (catalog.subpath ?? '') === subpath.trim()
+                && (catalog.gitIdentityId ?? null) === gitIdentityId)) && !scanOk
+            )}
           >
-            {t('settings.skills.catalog.add.actions.addCatalog')}
+            {catalogId ? t('settings.gitIdentities.editor.actions.save') : t('settings.skills.catalog.add.actions.addCatalog')}
           </Button>
         </DialogFooter>
       </DialogContent>

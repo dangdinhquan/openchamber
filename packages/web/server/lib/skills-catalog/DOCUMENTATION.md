@@ -38,17 +38,17 @@ The following functions are exported and used by the web server:
 - `parseSkillRepoSource(source, { subpath })`: Parse git repository source string into structured object with SSH/HTTPS clone URLs, normalized repo, and effective subpath. Supports SSH URLs, HTTPS URLs, and shorthand `owner/repo[/subpath]` format.
 
 ### Git Repository Scanning (`scan.js`)
-- `scanSkillsRepository({ source, subpath, defaultSubpath, identity })`: Scan git repository for skills by cloning and analyzing SKILL.md files. Returns array of skill items with metadata.
+- `scanSkillsRepository({ source, subpath, defaultSubpath, identity, credentialResolver })`: Scan a Git repository for skills by cloning it and reading its `SKILL.md` files. Account identities use their connected HTTPS credential, SSH identities use their managed key, anonymous identities use credential-free HTTPS, and System uses the server's Git configuration.
 
 ### Git Repository Installation (`install.js`)
-- `installSkillsFromRepository({ source, subpath, defaultSubpath, identity, scope, targetSource, workingDirectory, userSkillDir, selections, conflictPolicy, conflictDecisions })`: Install skills from git repository. Supports user/project scopes, opencode/agents targets, conflict resolution (prompt/skipAll/overwriteAll), and sparse checkout for efficiency.
+- `installSkillsFromRepository({ source, subpath, defaultSubpath, identity, credentialResolver, scope, targetSource, workingDirectory, userSkillDir, selections, conflictPolicy, conflictDecisions })`: Install selected skills from a Git repository. It uses the same identity transports as scanning and supports user/project scopes, opencode/agents targets, conflict resolution (prompt/skipAll/overwriteAll), and sparse checkout.
 
 ## Internal Helpers
 
 The following functions are internal helpers used by exported functions:
 
 ### Git Helpers (`git.js`)
-- `runGit(args, options)`: Execute git command with optional SSH identity, timeout, and max buffer. Returns `{ ok, stdout, stderr, message, code, signal }`.
+- `runGit(args, options)`: Execute a Git command with optional managed identity, credential resolver, timeout, and max buffer. HTTPS tokens go through the one-use local credential broker and never enter Git's arguments. Returns `{ ok, stdout, stderr, message, code, signal }`.
 - `looksLikeAuthError(message)`: Detect if error message indicates authentication failure (permission denied, publickey, etc.).
 - `assertGitAvailable()`: Check if git is available in PATH.
 
@@ -111,8 +111,9 @@ The following functions are internal helpers used by exported functions:
 - Skill names are derived from directory basenames for git repos.
 - Invalid names result in non-installable skills with appropriate warnings.
 
-### Git Cloning Strategy
-- Use sparse checkout to minimize clone size: `sparse-checkout init`, `sparse-checkout set`, `checkout HEAD`.
+### Git cloning strategy
+- Use sparse checkout to minimize checkout size: `sparse-checkout init`, `sparse-checkout set`, `checkout HEAD`.
+- Keep managed credentials scoped to the selected provider endpoint. Do not fall back to System Git after a selected identity fails.
 - Preferred clone uses `--depth=1 --filter=blob:none` for partial clone with fallback to `--depth=1`.
 - Always use non-interactive mode (`GIT_TERMINAL_PROMPT=0`) to avoid hangs.
 - SSH keys are injected via `core.sshCommand` in git config.

@@ -90,14 +90,18 @@ async function copyDirectoryNoSymlinks(srcDir, dstDir) {
   await walk(srcDir, dstDir);
 }
 
-async function cloneRepo({ cloneUrl, identity, tempDir }) {
+async function cloneRepo({ cloneUrl, identity, credentialResolver, tempDir }) {
   const preferred = ['clone', '--depth', '1', '--filter=blob:none', '--no-checkout', cloneUrl, tempDir];
   const fallback = ['clone', '--depth', '1', '--no-checkout', cloneUrl, tempDir];
 
-  const result = await runGit(preferred, { identity, timeoutMs: 90_000 });
+  const options = { identity, credentialResolver, timeoutMs: 90_000 };
+  const result = await runGit(preferred, options);
   if (result.ok) return { ok: true };
+  if (looksLikeAuthError(`${result.stderr || ''}\n${result.message || ''}`)) {
+    return { ok: false, error: result };
+  }
 
-  const fallbackResult = await runGit(fallback, { identity, timeoutMs: 90_000 });
+  const fallbackResult = await runGit(fallback, options);
   if (fallbackResult.ok) return { ok: true };
 
   return {
@@ -132,6 +136,7 @@ export async function installSkillsFromRepository({
   subpath,
   defaultSubpath,
   identity,
+  credentialResolver,
   scope,
   targetSource,
   workingDirectory,
@@ -174,7 +179,7 @@ export async function installSkillsFromRepository({
   const effectiveSubpath = parsed.effectiveSubpath || (typeof defaultSubpath === 'string' && defaultSubpath.trim() ? defaultSubpath.trim() : null);
   void effectiveSubpath;
 
-  const cloneUrl = identity?.sshKey ? parsed.cloneUrlSsh : parsed.cloneUrlHttps;
+  const cloneUrl = identity?.transport === 'ssh' || identity?.sshKey ? parsed.cloneUrlSsh : parsed.cloneUrlHttps;
 
   const requestedDirs = Array.isArray(selections) ? selections.map((s) => String(s?.skillDir || '').trim()).filter(Boolean) : [];
   if (requestedDirs.length === 0) {
@@ -217,23 +222,24 @@ export async function installSkillsFromRepository({
   const tempBase = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'openchamber-skills-install-'));
 
   try {
-    const cloned = await cloneRepo({ cloneUrl, identity, tempDir: tempBase });
+    const gitOptions = { identity, credentialResolver };
+    const cloned = await cloneRepo({ cloneUrl, identity, credentialResolver, tempDir: tempBase });
     if (!cloned.ok) {
       const msg = `${cloned.error?.stderr || ''}\n${cloned.error?.message || ''}`.trim();
       if (looksLikeAuthError(msg)) {
-        return { ok: false, error: { kind: 'authRequired', message: 'Authentication required to access this repository', sshOnly: true } };
+        return { ok: false, error: { kind: 'authRequired', message: 'Authentication required to access this repository' } };
       }
       return { ok: false, error: { kind: 'networkError', message: msg || 'Failed to clone repository' } };
     }
 
     // Selective checkout for only requested skill dirs.
-    await runGit(['-C', tempBase, 'sparse-checkout', 'init', '--cone'], { identity, timeoutMs: 15_000 });
-    const setResult = await runGit(['-C', tempBase, 'sparse-checkout', 'set', ...requestedDirs], { identity, timeoutMs: 30_000 });
+    await runGit(['-C', tempBase, 'sparse-checkout', 'init', '--cone'], { ...gitOptions, timeoutMs: 15_000 });
+    const setResult = await runGit(['-C', tempBase, 'sparse-checkout', 'set', ...requestedDirs], { ...gitOptions, timeoutMs: 30_000 });
     if (!setResult.ok) {
       return { ok: false, error: { kind: 'unknown', message: setResult.stderr || setResult.message || 'Failed to configure sparse checkout' } };
     }
 
-    const checkoutResult = await runGit(['-C', tempBase, 'checkout', '--force', 'HEAD'], { identity, timeoutMs: 60_000 });
+    const checkoutResult = await runGit(['-C', tempBase, 'checkout', '--force', 'HEAD'], { ...gitOptions, timeoutMs: 60_000 });
     if (!checkoutResult.ok) {
       return { ok: false, error: { kind: 'unknown', message: checkoutResult.stderr || checkoutResult.message || 'Failed to checkout repository' } };
     }
