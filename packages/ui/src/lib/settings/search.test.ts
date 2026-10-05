@@ -19,6 +19,14 @@ const runtimeCtx = {
 };
 
 describe('settings search', () => {
+  test('finds Agents Catalog on web and mobile but not in VS Code', () => {
+    for (const context of [runtimeCtx, { ...runtimeCtx, isMobile: true }]) {
+      const results = buildSettingsSearchResults({ query: 'agent catalog', runtimeCtx: context, t, getPageTitle: (page) => page });
+      expect(results.some((result) => result.id === 'agents.catalog.source')).toBe(true);
+    }
+    const results = buildSettingsSearchResults({ query: 'agent catalog', runtimeCtx: { ...runtimeCtx, isVSCode: true }, t, getPageTitle: (page) => page });
+    expect(results.some((result) => result.id === 'agents.catalog.source')).toBe(false);
+  });
   test('finds double-paste on every shared Settings surface', () => {
     for (const query of ['double paste', 'ctrl v', 'cmd v']) {
       for (const context of [runtimeCtx, { ...runtimeCtx, isDesktop: true }, { ...runtimeCtx, isVSCode: true }, { ...runtimeCtx, isMobile: true }]) {

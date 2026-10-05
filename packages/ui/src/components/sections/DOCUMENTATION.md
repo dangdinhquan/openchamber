@@ -65,6 +65,14 @@ on disk. Once the entity exists, the page switches to the autosave rules above.
 `skills/` follows the same split for supporting files: editing an existing file
 writes when the dialog closes, while a new file is only created on confirm.
 
+`agents/catalog/AgentsCatalogPage.tsx` follows the Skills Catalog browse flow: source
+cards, search across sources, selection, and install/remove dialogs. It stores
+Git sources separately in `agentCatalogs`. The server scans agent directories,
+or a selected repository subpath, for Markdown agent files with YAML
+frontmatter. It installs through the agent writer and rejects sources that were
+not saved in the catalog. The page is available in web, desktop, and mobile
+Settings, but not the VS Code webview.
+
 ## Providers
 
 `providers/` is not an autosave page. Connecting a provider is an action, not a

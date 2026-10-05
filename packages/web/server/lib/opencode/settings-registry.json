@@ -111,6 +111,9 @@
     "skillCatalogs": {
       "scope": "instance"
     },
+    "agentCatalogs": {
+      "scope": "instance"
+    },
     "defaultGitIdentityId": {
       "scope": "instance"
     },

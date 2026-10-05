@@ -104,6 +104,7 @@ const MOBILE_SETTINGS_PAGES = [
   'snippets',
   'behavior',
   'agents',
+  'agents.catalog',
   'commands',
   'mcp',
   'plugins',

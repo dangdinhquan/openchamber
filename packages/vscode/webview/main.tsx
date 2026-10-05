@@ -718,6 +718,10 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
     return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
+  if (pathname === '/api/config/agents/catalog' || pathname.startsWith('/api/config/agents/catalog/')) {
+    return new Response(JSON.stringify({ ok: false, error: { kind: 'unsupported', message: 'Agents Catalog is not available in VS Code' } }), { status: 501, headers: { 'Content-Type': 'application/json' } });
+  }
+
   if (pathname.startsWith('/api/config/agents/')) {
     // The web routes hang `/config` and `/permissions` off the agent name; the
     // bridge takes the sub-resource as its own field, so split it back out.

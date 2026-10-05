@@ -1147,6 +1147,27 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     keywords: ['catalog', 'repository', 'source', 'refresh'],
   },
   {
+    id: 'agents.catalog.source',
+    page: 'agents.catalog',
+    titleKey: 'settings.skills.catalog.page.section.sources',
+    keywords: ['agent catalog', 'git repository', 'source'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    id: 'agents.catalog.search',
+    page: 'agents.catalog',
+    titleKey: 'settings.agents.catalog.search',
+    keywords: ['find agents', 'install agents'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    id: 'agents.catalog.add-catalog',
+    page: 'agents.catalog',
+    titleKey: 'settings.skills.catalog.page.actions.addCatalog',
+    keywords: ['agents', 'external repository', 'add source'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
     id: 'skills.catalog.search',
     page: 'skills.catalog',
     titleKey: 'settings.skills.catalog.shared.field.searchSkillsPlaceholder',

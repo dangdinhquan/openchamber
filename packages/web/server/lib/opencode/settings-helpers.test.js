@@ -88,6 +88,22 @@ describe('settings helpers', () => {
     expect(helpers.sanitizeSettingsUpdate({ workStatusSectionOrder: 'bad' }).workStatusSectionOrder).toBeUndefined();
     expect(helpers.sanitizeSettingsUpdate({ workStatusSectionOrder: [] }).workStatusSectionOrder).toEqual([]);
   });
+  it('keeps agent catalog sources separate from skill catalog sources', () => {
+    const helpers = createSettingsHelpers({
+      ...createSettingsNormalizationRuntime({
+        os: { homedir: () => '/home/testuser' },
+        path: { resolve: (...args) => args[args.length - 1], sep: '/', dirname: (value) => value.split('/').slice(0, -1).join('/') || '/' },
+        processLike: { platform: 'linux', env: {} }, realpathSync: (value) => value,
+        tunnelBootstrapTtlDefaultMs: 600000, tunnelBootstrapTtlMinMs: 60000, tunnelBootstrapTtlMaxMs: 3600000,
+        tunnelSessionTtlDefaultMs: 86400000, tunnelSessionTtlMinMs: 3600000, tunnelSessionTtlMaxMs: 604800000,
+      }),
+    });
+    const changes = helpers.sanitizeSettingsUpdate({ agentCatalogs: [{ id: 'a', label: 'Agents', source: 'owner/agents' }] });
+    expect(changes.agentCatalogs).toEqual([{ id: 'a', label: 'Agents', source: 'owner/agents' }]);
+    const saved = helpers.mergePersistedSettings({ skillCatalogs: [{ id: 's', label: 'Skills', source: 'owner/skills' }] }, changes);
+    expect(helpers.formatSettingsResponse(JSON.parse(JSON.stringify(saved))).skillCatalogs).toHaveLength(1);
+    expect(helpers.formatSettingsResponse(JSON.parse(JSON.stringify(saved))).agentCatalogs).toEqual(changes.agentCatalogs);
+  });
   it('round-trips telemetry opt-in with the hidden list and preserves it across unrelated writes', () => {
     const helpers = createTestHelpers();
     const legacy = helpers.sanitizeSettingsUpdate({ workStatusHiddenSections: [] });
@@ -783,7 +799,7 @@ describe('settings registry gate', () => {
     projects: [{ id: 'p', path: '/home/testuser/project' }], activeProjectId: 'p',
     securityScopedBookmarks: ['bookmark'], pinnedDirectories: ['/home/testuser/project'],
     desktopLanAccessEnabled: true, desktopKeepAwakeEnabled: true, desktopMinimizeToTrayEnabled: true, desktopMacMenuBarEnabled: true,
-    desktopUiPassword: 'secret', githubClientId: 'client', githubScopes: 'repo', gitlabClientId: 'gitlab-client', skillCatalogs: [{ id: 'c', label: 'C', source: 'https://x' }],
+    desktopUiPassword: 'secret', githubClientId: 'client', githubScopes: 'repo', gitlabClientId: 'gitlab-client', skillCatalogs: [{ id: 'c', label: 'C', source: 'https://x' }], agentCatalogs: [{ id: 'a', label: 'A', source: 'owner/repo' }],
     defaultGitIdentityId: 'global', permissionAutoAccept: { sessions: { s: true }, revision: 1 }, permissionDefaultMode: 'safety', messageSearchEnabled: true, messageSearchReasoningEnabled: true,
     agentControlToolEnabled: true, agentWebToolEnabled: true, browserProvider: 'builtin', agentMemoryToolEnabled: true, agentNotifyToolEnabled: true, agentToolsCodeMode: true, isolatedSpacesEnabled: true, isolatedSpacesIdleStop: { enabled: true, hours: 4 }, openCodeUpdateToastDismissedVersion: '1.0.0',
     autoDeleteEnabled: true, autoDeleteAfterDays: 30, sessionRetentionOnlyArchived: false, sessionRetentionAction: 'archive', mergedWorktreeCleanupEnabled: true, terminalShell: 'zsh', terminalLoginShells: ['zsh'],

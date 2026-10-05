@@ -103,14 +103,15 @@ const formatRelativeShort = (isoDate: string): { key: RelativeTimeKey; count: nu
   return { key: 'common.relative.yearsAgoShort', count: Math.floor(days / 365) };
 };
 
-const SourceCard: React.FC<{
+export const CatalogSourceCard: React.FC<{
   source: SkillsCatalogSource;
   isActive: boolean;
   isLoading: boolean;
   skillsCount: number | null;
+  countLabel: string | null;
   onSelect: () => void;
   t: ReturnType<typeof useI18n>['t'];
-}> = ({ source, isActive, isLoading, skillsCount, onSelect, t }) => {
+}> = ({ source, isActive, isLoading, skillsCount, countLabel, onSelect, t }) => {
   const stars = source.stars ?? null;
   const updated = source.repoUpdatedAt ? formatRelativeShort(source.repoUpdatedAt) : null;
 
@@ -135,7 +136,7 @@ const SourceCard: React.FC<{
           ) : (
             skillsCount !== null && (
               <span className="typography-micro text-muted-foreground shrink-0">
-                {t('settings.skills.catalog.page.source.skillsCount', { count: skillsCount })}
+                {countLabel ?? t('settings.skills.catalog.page.source.skillsCount', { count: skillsCount })}
               </span>
             )
           )}
@@ -454,12 +455,13 @@ export const SkillsCatalogPage: React.FC<SkillsCatalogPageProps> = ({ mode, onMo
         >
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 py-1.5">
             {sources.map((src) => (
-              <SourceCard
+              <CatalogSourceCard
                 key={src.id}
                 source={src}
                 isActive={src.id === selectedSourceId}
                 isLoading={isLoadingSource && !loadedSourceIds[src.id]}
                 skillsCount={loadedSourceIds[src.id] ? (itemsBySource[src.id] || []).length : null}
+                countLabel={null}
                 onSelect={() => setSelectedSource(src.id)}
                 t={t}
               />

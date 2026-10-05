@@ -27,7 +27,7 @@ import { registerScheduledTaskRoutes } from '../scheduled-tasks/routes.js';
 import { registerOpenChamberSessionRoutes } from '../openchamber-sessions/routes.js';
 import { registerOpenChamberControlRoutes } from '../openchamber-control/routes.js';
 import { registerMarkdownImageGrantRoutes } from '../markdown-image-grants/routes.js';
-import { registerSkillRoutes } from './skill-routes.js';
+import { registerAgentCatalogRoutes, registerSkillRoutes } from './skill-routes.js';
 import { registerPluginRoutes } from './plugin-routes.js';
 import { getNpmInfo, clearCache as clearNpmCache } from './npm-registry.js';
 import { parseNpmSpec, parsePathSpec, isExactSemver } from './plugin-spec.js';
@@ -56,6 +56,7 @@ import { getCuratedSkillsSources } from '../skills-catalog/curated-sources.js';
 import { getCacheKey, scanWithCache } from '../skills-catalog/cache.js';
 import { parseSkillRepoSource } from '../skills-catalog/source.js';
 import { scanSkillsRepository } from '../skills-catalog/scan.js';
+import { scanAgentsRepository } from '../skills-catalog/agents.js';
 import { installSkillsFromRepository } from '../skills-catalog/install.js';
 import { fetchGitHubRepoMetas } from '../skills-catalog/github-meta.js';
 import crypto from 'node:crypto';
@@ -295,6 +296,19 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getOpenCodeAuthHeaders,
     });
 
+    registerAgentCatalogRoutes(app, {
+      readSettingsFromDisk,
+      sanitizeSkillCatalogs,
+      resolveProjectDirectory,
+      scanAgentsRepository,
+      createAgent,
+      parseSkillRepoSource,
+      fetchGitHubRepoMetas,
+      getProfile: (id) => getProfile(id),
+      createHttpsCredentialReference: (options) => createHttpsCredentialReference(options),
+      resolveSourceControlAccount: (options) => resolveSourceControlAccount(options),
+      credentialResolver: { resolve: (options) => gitCredentialResolver.resolve(options) },
+    });
     registerConfigEntityRoutes(app, {
       resolveProjectDirectory,
       resolveOptionalProjectDirectory,

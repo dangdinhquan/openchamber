@@ -856,6 +856,10 @@ export const createSettingsHelpers = (dependencies) => {
     if (skillCatalogs) {
       result.skillCatalogs = skillCatalogs;
     }
+    const agentCatalogs = sanitizeSkillCatalogs(candidate.agentCatalogs);
+    if (agentCatalogs) {
+      result.agentCatalogs = agentCatalogs;
+    }
 
     // Usage model selections - which models appear in dropdown
     if (candidate.usageSelectedModels && typeof candidate.usageSelectedModels === 'object') {

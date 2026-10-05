@@ -239,6 +239,7 @@ export const SETTINGS_REGISTRY = {
   githubScopes: field({ scope: 'instance', parse: parseNonEmptyTrimmedString }),
   gitlabClientId: field({ scope: 'instance', parse: parseNonEmptyTrimmedString }),
   skillCatalogs: field<SkillCatalogConfig[]>({ scope: 'instance', parse: parseSkillCatalogs }),
+  agentCatalogs: field<SkillCatalogConfig[]>({ scope: 'instance', parse: parseSkillCatalogs }),
   defaultGitIdentityId: field({ scope: 'instance', parse: parseTrimmedString }),
   // Per-session permission modes; booleans are policies from before the modes,
   // which the server converts on its first read.

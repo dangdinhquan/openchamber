@@ -19,6 +19,7 @@ import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { AgentsSidebar } from '@/components/sections/agents/AgentsSidebar';
 import { AgentsPage } from '@/components/sections/agents/AgentsPage';
+import { AgentsCatalogPage } from '@/components/sections/agents/catalog/AgentsCatalogPage';
 import { BehaviorPage } from '@/components/sections/behavior/BehaviorPage';
 import { WebSearchPage } from '@/components/sections/websearch/WebSearchPage';
 import { CommandsSidebar } from '@/components/sections/commands/CommandsSidebar';
@@ -124,6 +125,7 @@ const pageOrder: SettingsPageSlug[] = [
   'providers',
   'web-search',
   'agents',
+  'agents.catalog',
   'behavior',
   'commands',
   'mcp',
@@ -339,6 +341,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return t('settings.page.usage.title');
       case 'agents':
         return t('settings.page.agents.title');
+      case 'agents.catalog':
+        return t('settings.page.agentsCatalog.title');
       case 'behavior':
         return t('settings.page.behavior.title');
       case 'commands':
@@ -662,6 +666,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return <RemoteInstancesPage />;
       case 'agents':
         return <AgentsPage />;
+      case 'agents.catalog':
+        return <AgentsCatalogPage />;
       case 'behavior':
         return <BehaviorPage />;
       case 'commands':

@@ -12,6 +12,92 @@ const isEnvFlagEnabled = (value) => {
   return normalized.length > 0 && normalized !== '0' && normalized !== 'false';
 };
 
+export const registerAgentCatalogRoutes = (app, dependencies) => {
+  const {
+    readSettingsFromDisk, sanitizeSkillCatalogs, resolveProjectDirectory,
+    scanAgentsRepository, createAgent, credentialResolver, getProfile,
+    parseSkillRepoSource, fetchGitHubRepoMetas, createHttpsCredentialReference, resolveSourceControlAccount,
+  } = dependencies;
+
+  const resolveCatalogGitIdentity = async (identityId, source) => {
+    if (!identityId || identityId === 'global') return { ok: true, identity: null };
+    const profile = getProfile(identityId);
+    if (!profile) return { ok: false, error: { kind: 'authRequired', message: 'Selected Git identity is unavailable' } };
+    const transport = profile.transport ?? 'system';
+    if (transport === 'system') return { ok: true, identity: null };
+    if (transport === 'anonymous') return { ok: true, identity: { anonymous: true, transport } };
+    const parsed = parseSkillRepoSource(source);
+    if (!parsed.ok) return parsed;
+    if (transport === 'ssh') return { ok: true, identity: { transport, credentialId: profile.sshCredentialId, endpoint: parsed.cloneUrlSsh } };
+    if (transport === 'account' && profile.account && resolveSourceControlAccount && createHttpsCredentialReference) {
+      const account = await resolveSourceControlAccount(profile.account);
+      if (account?.credentialId === profile.account.accountId && account.status === 'valid'
+        && Number.isSafeInteger(account.credentialRevision) && account.credentialRevision > 0) {
+        try {
+          const credentialId = createHttpsCredentialReference({ provider: profile.account.provider, instance: profile.account.instance,
+            credentialId: account.credentialId, credentialRevision: account.credentialRevision, providerUserId: account.providerUserId });
+          return { ok: true, identity: { transport: 'https', credentialId, endpoint: parsed.cloneUrlHttps } };
+        } catch { /* An unavailable credential is an auth failure. */ }
+      }
+    }
+    return { ok: false, error: { kind: 'authRequired', message: 'Selected Git identity is unavailable' } };
+  };
+
+  app.get('/api/config/agents/catalog', async (req, res) => {
+    try {
+      const settings = await readSettingsFromDisk();
+      const catalogs = sanitizeSkillCatalogs(settings.agentCatalogs) || [];
+      const githubRepos = catalogs.map((catalog) => parseSkillRepoSource(catalog.source))
+        .filter((parsed) => parsed.ok && parsed.host === 'github.com')
+        .map((parsed) => parsed.normalizedRepo);
+      const repoMetas = await fetchGitHubRepoMetas(githubRepos);
+      const sources = catalogs.map((catalog) => {
+        const parsed = parseSkillRepoSource(catalog.source);
+        const meta = parsed.ok && parsed.host === 'github.com' ? repoMetas[parsed.normalizedRepo] || {} : {};
+        return { ...catalog, stars: meta.stars ?? null, repoUpdatedAt: meta.repoUpdatedAt ?? null };
+      });
+      res.json({ ok: true, sources });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: { kind: 'unknown', message: error.message } });
+    }
+  });
+
+  app.post('/api/config/agents/catalog/scan', async (req, res) => {
+    const { source, subpath, gitIdentityId } = req.body || {};
+    try {
+      const resolved = await resolveCatalogGitIdentity(gitIdentityId, source);
+      if (!resolved.ok) return res.status(401).json({ ok: false, error: resolved.error });
+      const result = await scanAgentsRepository({ source, subpath, identity: resolved.identity, credentialResolver });
+      if (!result.ok) return res.status(result.error?.kind === 'authRequired' ? 401 : 400).json(result);
+      return res.json({ ok: true, items: result.items.map(({ config, ...item }) => item) });
+    } catch (error) {
+      return res.status(500).json({ ok: false, error: { kind: 'unknown', message: error.message } });
+    }
+  });
+
+  app.post('/api/config/agents/catalog/install', async (req, res) => {
+    const { sourceId, agentPath, scope } = req.body || {};
+    if (scope !== 'user' && scope !== 'project') return res.status(400).json({ ok: false, error: { kind: 'invalidSource', message: 'Invalid scope' } });
+    try {
+      const { directory, error } = await resolveProjectDirectory(req);
+      if (!directory) return res.status(400).json({ ok: false, error: { kind: 'invalidSource', message: error } });
+      const settings = await readSettingsFromDisk();
+      const catalog = (sanitizeSkillCatalogs(settings.agentCatalogs) || []).find((entry) => entry.id === sourceId);
+      if (!catalog) return res.status(404).json({ ok: false, error: { kind: 'invalidSource', message: 'Unknown source' } });
+      const resolved = await resolveCatalogGitIdentity(catalog.gitIdentityId, catalog.source);
+      if (!resolved.ok) return res.status(401).json({ ok: false, error: resolved.error });
+      const scanned = await scanAgentsRepository({ source: catalog.source, subpath: catalog.subpath, identity: resolved.identity, credentialResolver });
+      if (!scanned.ok) return res.status(scanned.error?.kind === 'authRequired' ? 401 : 400).json(scanned);
+      const item = scanned.items.find((entry) => entry.agentPath === agentPath);
+      if (!item) return res.status(404).json({ ok: false, error: { kind: 'invalidSource', message: 'Agent not found in repository' } });
+      createAgent(item.name, item.config, directory, scope);
+      return res.json({ ok: true, name: item.name });
+    } catch (error) {
+      return res.status(409).json({ ok: false, error: { kind: 'conflict', message: error.message } });
+    }
+  });
+};
+
 export const registerSkillRoutes = (app, dependencies) => {
   const {
     fs,

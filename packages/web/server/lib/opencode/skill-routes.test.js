@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { registerSkillRoutes } from './skill-routes.js';
+import { registerAgentCatalogRoutes, registerSkillRoutes } from './skill-routes.js';
 import {
   createSkill,
   deleteSkill,
@@ -32,7 +32,7 @@ const startSkillsApp = ({ projectRoot, overrides = {} }) => {
   const app = express();
   app.use(express.json());
 
-  registerSkillRoutes(app, {
+  const dependencies = {
     fs,
     path,
     os,
@@ -72,12 +72,16 @@ const startSkillsApp = ({ projectRoot, overrides = {} }) => {
     scanWithCache: async (_key, loader) => loader(),
     parseSkillRepoSource: () => ({ ok: false }),
     scanSkillsRepository: async () => ({ ok: false }),
+    scanAgentsRepository: async () => ({ ok: true, items: [] }),
+    createAgent: () => ({}),
     installSkillsFromRepository: async () => ({ ok: false }),
     fetchGitHubRepoMetas: async () => ({}),
     getProfiles: () => [],
     getProfile: () => null,
     ...overrides,
-  });
+  };
+  registerAgentCatalogRoutes(app, dependencies);
+  registerSkillRoutes(app, dependencies);
 
   const server = app.listen(0);
   const { port } = server.address();
@@ -105,6 +109,46 @@ describe('skill-routes directory soft fallback', () => {
       projectRoot = null;
     }
   });
+
+  it('lists independent agent sources and installs only a scanned agent', async () => {
+    projectRoot = createTempProject();
+    const createAgent = vi.fn();
+    appHandle = startSkillsApp({ projectRoot, overrides: {
+      readSettingsFromDisk: async () => ({ agentCatalogs: [{ id: 'custom:a', label: 'Agents', source: 'owner/repo' }] }),
+      scanAgentsRepository: async () => ({ ok: true, items: [{ name: 'reviewer', description: 'Reviews code', agentPath: 'agents/reviewer.md', config: { description: 'Reviews code', system: 'Review.' } }] }),
+      createAgent,
+    } });
+
+    const sources = await fetch(`${appHandle.baseUrl}/api/config/agents/catalog`);
+    expect((await sources.json()).sources).toEqual([{ id: 'custom:a', label: 'Agents', source: 'owner/repo', stars: null, repoUpdatedAt: null }]);
+
+    const scanned = await fetch(`${appHandle.baseUrl}/api/config/agents/catalog/scan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'owner/repo' }),
+    });
+    expect((await scanned.json()).items[0]).not.toHaveProperty('config');
+
+    const unknownSource = await fetch(`${appHandle.baseUrl}/api/config/agents/catalog/install`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceId: 'missing', agentPath: 'agents/reviewer.md', scope: 'project' }),
+    });
+    expect(unknownSource.status).toBe(404);
+    expect(createAgent).not.toHaveBeenCalled();
+
+    const missing = await fetch(`${appHandle.baseUrl}/api/config/agents/catalog/install`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceId: 'custom:a', agentPath: '../reviewer.md', scope: 'project' }),
+    });
+    expect(missing.status).toBe(404);
+    expect(createAgent).not.toHaveBeenCalled();
+
+    const installed = await fetch(`${appHandle.baseUrl}/api/config/agents/catalog/install`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceId: 'custom:a', agentPath: 'agents/reviewer.md', scope: 'project' }),
+    });
+    expect(installed.status).toBe(200);
+    expect(createAgent).toHaveBeenCalledWith('reviewer', { description: 'Reviews code', system: 'Review.' }, projectRoot, 'project');
+  });
+
 
   it('lists repository-local .agents skills after create even when list omits directory', async () => {
     projectRoot = createTempProject();

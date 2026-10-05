@@ -11,6 +11,7 @@ export type SettingsPageSlug =
   | 'web-search'
   | 'usage'
   | 'agents'
+  | 'agents.catalog'
   | 'behavior'
   | 'commands'
   | 'mcp'
@@ -120,6 +121,14 @@ export const SETTINGS_PAGE_METADATA: readonly SettingsPageMeta[] = [
     group: 'opencode',
     kind: 'split',
     keywords: ['agent', 'agents', 'prompts', 'tools', 'permissions'],
+  },
+  {
+    slug: 'agents.catalog',
+    title: 'Agents Catalog',
+    group: 'opencode',
+    kind: 'single',
+    keywords: ['agents', 'catalog', 'repository', 'install'],
+    isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
     slug: 'behavior',
@@ -319,6 +328,8 @@ export function getSettingsNavIcon(slug: SettingsPageSlug): IconName | null {
       return 'global';
     case 'agents':
       return 'ai-agent';
+    case 'agents.catalog':
+      return 'book';
     case 'behavior':
       return 'brain';
     case 'commands':
