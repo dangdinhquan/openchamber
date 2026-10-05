@@ -1,4 +1,5 @@
 import fsSync from 'node:fs';
+import { LFS_DISCOVERY_LIMITS } from './lfs-discovery.js';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -285,6 +286,22 @@ describe('Git network operations', () => {
     expect(await operation.service.execute(plan.operationId)).toMatchObject({ state: 'conflicted', error: { code: 'REMOTE_CHANGED' } });
     expect(operation.calls).toHaveLength(0);
     expect(operation.credentialResolver.resolve).not.toHaveBeenCalled();
+  });
+
+  it('reports a grant whose account needs attention as authentication required', async () => {
+    let attention = false;
+    const operation = setup({
+      authorityFor: () => {
+        if (!attention) return undefined;
+        throw Object.assign(new Error('Git transport remote binding needs attention'), {
+          code: 'SOURCE_CONTROL_BINDING_STALE', reason: 'needs-attention', status: 409,
+        });
+      },
+    });
+    const plan = await operation.service.plan(request('fetch'));
+    attention = true;
+    expect(await operation.service.execute(plan.operationId)).toMatchObject({ error: { code: 'AUTHENTICATION_REQUIRED' } });
+    expect(operation.calls).toHaveLength(0);
   });
 
   it.each([false, true])('does not reuse anonymous parent authority for a submodule, exact grant=%s', async (granted) => {
@@ -2184,6 +2201,51 @@ process.exit(safe ? 0 : 1);
     }
   }, 20_000);
 
+  it.each([
+    ['nothing new on either side', false, 'skipped'],
+    ['only incoming commits', true, 'succeeded'],
+  ])('skips the push when the fetched branch already holds the result: %s', async (_label, incoming, pullStatus) => {
+    const { directory, env, git } = await createLocalRepository();
+    let remoteHead = await git('rev-parse', 'HEAD');
+    if (incoming) {
+      await git('checkout', '-b', 'incoming');
+      await fs.writeFile(path.join(directory, 'incoming.txt'), 'incoming\n');
+      await git('add', '.');
+      await git('commit', '-m', 'incoming');
+      remoteHead = await git('rev-parse', 'HEAD');
+      await git('checkout', 'published');
+    }
+    const calls = [];
+    const operations = createNetworkOperations({
+      validateGitTransportContext: async () => ({ endpoint: ENDPOINT, endpointFingerprint: fingerprintRemoteUrl(ENDPOINT),
+        transportMode: 'system', transportRevision: 'one' }),
+      credentialResolver: { resolve: async () => { throw new Error('system transport needs no credential'); } },
+      credentialBroker: { start: vi.fn(async () => {}), issue: vi.fn(), revoke: vi.fn() },
+      inheritedEnv: env,
+      runtimeIdentity: { id: 'fixture', platform: 'web' },
+      spawnImpl: (binary, args, options) => {
+        calls.push(args);
+        // The fetch writes what the remote holds; nothing else leaves the machine.
+        const transfer = args.indexOf('fetch');
+        if (transfer >= 0) return spawn(binary, [...args.slice(0, transfer), 'update-ref', args.at(-1).split(':')[1], remoteHead], options);
+        return spawn(binary, args, options);
+      },
+    });
+    const remote = { name: 'origin', endpoint: { displayUrl: ENDPOINT, fingerprint: fingerprintRemoteUrl(ENDPOINT) } };
+    const plan = await operations.plan(syncRequest({
+      directory,
+      fetch: { remote, sourceRef: 'refs/heads/published', destinationRef: 'refs/remotes/origin/published', transportMode: 'system' },
+      push: { remote, sourceRef: 'refs/heads/published', destinationRef: 'refs/heads/published', transportMode: 'system' },
+    }));
+    const result = await operations.execute(plan.operationId);
+
+    expect(result, JSON.stringify(result)).toMatchObject({ state: 'succeeded', stepResults: [
+      { step: 'fetch', status: 'succeeded' }, { step: 'pull', status: pullStatus }, { step: 'push', status: 'skipped' },
+    ] });
+    expect(await git('rev-parse', 'HEAD')).toBe(remoteHead);
+    expect(calls.some((args) => args.includes('push'))).toBe(false);
+  });
+
   it.each(['smudge', 'process'])('prevents managed sync %s filters and hooks from contacting a network listener', async (filter) => {
     const { parent, directory, env, git } = await createLocalRepository();
     await git('checkout', '-b', 'incoming');
@@ -2240,10 +2302,11 @@ process.exit(safe ? 0 : 1);
       expect(result, JSON.stringify(result)).toMatchObject({ state: 'succeeded', stepResults: [
         { step: 'fetch', status: 'succeeded' }, { step: 'pull', status: 'succeeded' }, { step: 'push', status: 'succeeded' },
       ] });
-      expect(await git('rev-parse', 'HEAD^1')).toBe(oldHead);
-      expect(await git('rev-parse', 'HEAD^2')).toBe(incomingSha);
+      // Local work is replayed on the incoming commit: linear history, no merge commit.
+      await git('merge-base', '--is-ancestor', incomingSha, 'HEAD');
+      expect(await git('rev-list', '--merges', `${oldHead}..HEAD`)).toBe('');
       expect(await fs.readFile(path.join(directory, 'asset.bin'), 'utf8')).toBe('incoming content\n');
-      const merge = calls.find((call) => call.args.includes('merge'));
+      const merge = calls.find((call) => call.args.includes('rebase'));
       expect(merge.options.env).toMatchObject({ GIT_ALLOW_PROTOCOL: '', GIT_NO_LAZY_FETCH: '1', GIT_NO_REPLACE_OBJECTS: '1' });
       expect(merge.options.env.GIT_ASKPASS).toBeUndefined();
       expect(merge.options.env.SSH_AUTH_SOCK).toBeUndefined();
@@ -2398,14 +2461,15 @@ process.exit(safe ? 0 : 1);
       expect((await fs.readdir(destination)).filter((name) => name !== '.git')).toHaveLength(count);
     }
     expect(calls.filter((args) => args.includes('show'))).toHaveLength(0);
-    expect(calls.length).toBeLessThanOrEqual(3 * Math.ceil(count / 128) + 12);
+    expect(calls.length).toBeLessThanOrEqual(3 * Math.ceil(count / LFS_DISCOVERY_LIMITS.fileBatchSize) + 12);
   }, 90_000);
 
   it.each(['CANCELLED', 'CANCELLED_ACTIVE', 'TIMEOUT', 'overflow'])('stops LFS discovery across batches on %s without publication', async (interruption) => {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-lfs-interruption-'));
     temporaryDirectories.push(parent);
     const destination = path.join(parent, 'checkout');
-    const files = Array.from({ length: 257 }, (_, index) => `file-${index}`);
+    // Enough files for three discovery batches, so the interruption lands between them.
+    const files = Array.from({ length: 2 * LFS_DISCOVERY_LIMITS.fileBatchSize + 1 }, (_, index) => `file-${index}`);
     const content = 'ordinary';
     let metadataBatches = 0;
     let plan;
@@ -2623,7 +2687,7 @@ process.exit(safe ? 0 : 1);
       const plan = await setupValue.service.plan(request('pull'));
       const running = setupValue.service.execute(plan.operationId);
       await vi.advanceTimersByTimeAsync(20);
-      expect(setupValue.calls.some((call) => call.args.includes('merge'))).toBe(true);
+      expect(setupValue.calls.some((call) => call.args.includes('rebase'))).toBe(true);
       await vi.advanceTimersByTimeAsync(5);
       await expect(running).resolves.toMatchObject({ state: 'outcome-unknown' });
     } finally {
@@ -2665,7 +2729,7 @@ process.exit(safe ? 0 : 1);
     expect(setupValue.calls[0].args.slice(-6)).toEqual([
       'fetch', '--no-tags', '--no-recurse-submodules', '--', ENDPOINT, 'refs/heads/feature:refs/openchamber/network/git_operation_one',
     ]);
-    expect(setupValue.calls.find((call) => call.args.includes('merge')).args.slice(-4)).toEqual(['merge', '--no-edit', '--no-verify', SHA]);
+    expect(setupValue.calls.find((call) => call.args.includes('rebase')).args.slice(-4)).toEqual(['rebase', '--no-verify', '--no-autostash', SHA]);
     // The managed credential is revoked before integration; the tracking ref
     // must still move with the credential-free context.
     expect(setupValue.calls.map((call) => call.args.slice(-3)))
@@ -2680,7 +2744,7 @@ process.exit(safe ? 0 : 1);
       let merged = false;
       const setupValue = setup({
         spawnResults: [{ code: 0 }, { code: 0 }, { code: 0 }],
-        spawnResponder: ({ args }) => { if (args.includes('merge')) merged = true; return undefined; },
+        spawnResponder: ({ args }) => { if (args.includes('rebase')) merged = true; return undefined; },
       });
       setupValue.validateGitTransportContext.mockImplementation(async ({ endpointKind }) => ({
         ...setupValue.authority, ...(merged ? afterMerge(setupValue.authority, endpointKind) : {}),
@@ -2690,7 +2754,8 @@ process.exit(safe ? 0 : 1);
     const changed = syncWith(() => ({ transportRevision: 'transport_after_merge' }));
     const plan = await changed.service.plan(syncRequest());
     expect(await changed.service.execute(plan.operationId)).toMatchObject({ state: 'succeeded', stepResults: [
-      { step: 'fetch', status: 'succeeded' }, { step: 'pull', status: 'succeeded' }, { step: 'push', status: 'succeeded' },
+      // The fixture's branch never moves, so the pull brought nothing in.
+      { step: 'fetch', status: 'succeeded' }, { step: 'pull', status: 'skipped' }, { step: 'push', status: 'succeeded' },
     ] });
 
     const moved = syncWith((_authority, endpointKind) => (endpointKind === 'push'
@@ -2727,7 +2792,8 @@ process.exit(safe ? 0 : 1);
       state: 'succeeded',
       stepResults: [
         { step: 'fetch', status: 'succeeded' },
-        { step: 'pull', status: 'succeeded' },
+        // The fixture's branch never moves, so the pull brought nothing in.
+        { step: 'pull', status: 'skipped' },
         { step: 'push', status: 'succeeded' },
       ],
     });
@@ -2736,7 +2802,7 @@ process.exit(safe ? 0 : 1);
     expect(setupValue.calls[0].args.slice(-6)).toEqual([
       'fetch', '--no-tags', '--no-recurse-submodules', '--', fetchEndpoint, 'refs/heads/main:refs/remotes/upstream/main',
     ]);
-    expect(setupValue.calls.find((call) => call.args.includes('merge')).args.slice(-4)).toEqual(['merge', '--no-edit', '--no-verify', SHA]);
+    expect(setupValue.calls.find((call) => call.args.includes('rebase')).args.slice(-4)).toEqual(['rebase', '--no-verify', '--no-autostash', SHA]);
     expect(setupValue.calls.at(-2).args.slice(-4)).toEqual(['push', '--', pushEndpoint, `${SHA}:refs/heads/published`]);
     expect(setupValue.calls.at(-1).args.slice(-3)).toEqual(['update-ref', 'refs/remotes/origin/published', SHA]);
   });
@@ -2752,7 +2818,8 @@ process.exit(safe ? 0 : 1);
       error: { code: 'TRANSPORT_FAILED' },
       stepResults: [
         { step: 'fetch', status: 'succeeded' },
-        { step: 'pull', status: 'succeeded' },
+        // The fixture's branch never moves, so the pull brought nothing in.
+        { step: 'pull', status: 'skipped' },
         { step: 'push', status: 'failed' },
       ],
     });
@@ -2812,7 +2879,7 @@ process.exit(safe ? 0 : 1);
       expect(['conflicted', 'partial']).toContain(result.state);
       expect(result.stepResults[0]).toEqual({ step: 'fetch', status: 'succeeded' });
       expect(result.stepResults[2]).toEqual({ step: 'push', status: 'skipped' });
-      expect(operation.calls.some((call) => call.args.includes('merge'))).toBe(false);
+      expect(operation.calls.some((call) => call.args.includes('rebase'))).toBe(false);
     }
   });
 
@@ -2867,14 +2934,14 @@ process.exit(safe ? 0 : 1);
     expect(setupValue.calls).toHaveLength(0);
   });
 
-  it('reports interrupted pull integration as conflicted when MERGE_HEAD exists', async () => {
+  it('reports interrupted pull integration as conflicted when a rebase is in progress', async () => {
     const setupValue = setup({
       spawnResults: [{ code: 0 }, { code: 0 }, { manual: true }, { code: 0 }],
       inspectMergeState: vi.fn(async () => true),
     });
     const plan = await setupValue.service.plan(request('pull'));
     const running = setupValue.service.execute(plan.operationId);
-    await vi.waitFor(() => expect(setupValue.calls.some((call) => call.args.includes('merge'))).toBe(true));
+    await vi.waitFor(() => expect(setupValue.calls.some((call) => call.args.includes('rebase'))).toBe(true));
     setupValue.service.cancel(plan.operationId);
 
     await expect(running).resolves.toMatchObject({ state: 'conflicted', error: { code: 'CONFLICT' } });
@@ -2887,7 +2954,7 @@ process.exit(safe ? 0 : 1);
     });
     const plan = await setupValue.service.plan(request('pull'));
     const running = setupValue.service.execute(plan.operationId);
-    await vi.waitFor(() => expect(setupValue.calls.some((call) => call.args.includes('merge'))).toBe(true));
+    await vi.waitFor(() => expect(setupValue.calls.some((call) => call.args.includes('rebase'))).toBe(true));
     setupValue.service.cancel(plan.operationId);
 
     await expect(running).resolves.toMatchObject({ state: 'outcome-unknown', error: { code: 'OUTCOME_UNKNOWN' } });

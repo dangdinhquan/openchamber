@@ -12,7 +12,7 @@ import { createNetworkOperationPlanner } from './network-operation-plan.js';
 import { createNetworkOperationRegistry } from './network-operation-registry.js';
 import { createGitRedactor, redactGitText } from './redaction.js';
 import { parseSubmoduleManifest, SUBMODULE_DISCOVERY_LIMITS } from './submodule-discovery.js';
-import { discoverLfs, scanLfsFiles, scanLfsPushObjects, resolveLfsPushConfig, LFS_DISCOVERY_LIMITS } from './lfs-discovery.js';
+import { discoverLfs, parseTreeObjects, scanLfsFiles, scanLfsPushObjects, resolveLfsPushConfig, LFS_DISCOVERY_LIMITS } from './lfs-discovery.js';
 import { resolveGitRelativeEndpoint } from './discovery-endpoint.js';
 import { fingerprintRemoteUrl, redactRemoteUrl } from '../source-control/url-redaction.js';
 
@@ -45,6 +45,13 @@ const isString = (value) => Object.prototype.toString.call(value) === '[object S
 
 const operationError = (code, message, status = 500, details = {}) => Object.assign(new Error(message), { code, status, ...details });
 const publicError = (code, message) => ({ code, message });
+// `ls-tree -l` adds each object's size before the tab; the submodule parser
+// reads gitlinks in the short form, so their size column (always `-`) goes.
+const readTreeListing = (treeOutput) => ({
+  gitlinks: treeOutput.split('\0').filter((record) => record.startsWith('160000 '))
+    .map((record) => `${record.replace(/^(160000 commit [0-9a-f]+) +-\t/, '$1\t')}\0`).join(''),
+  treeObjects: parseTreeObjects(treeOutput),
+});
 const terminal = (state, code, message) => ({ state, error: publicError(code, message) });
 const fileIdentity = (stats) => `${stats.dev}:${stats.ino}`;
 // Linux reuses an inode number when a directory is removed and recreated in the
@@ -182,6 +189,8 @@ const appendBounded = (chunks, chunk, state, limit) => {
 };
 
 const authorityCode = (error) => {
+  // A grant whose account needs attention is an access problem the user fixes.
+  if (error?.reason === 'needs-attention') return 'AUTHENTICATION_REQUIRED';
   if (error?.code === 'SOURCE_CONTROL_BINDING_STALE') return 'STALE_BINDING';
   if (error?.code === 'UNSUPPORTED_SOURCE_CONTROL_REPOSITORY') return 'STALE_REPOSITORY';
   if (error?.code === 'INVALID_GIT_TRANSPORT_CONTEXT') return 'INVALID_REQUEST';
@@ -563,13 +572,17 @@ export function createNetworkOperations({
       if (!match) return false;
       gitDirectory = pathImpl.resolve(directory, match[1]);
     }
-    try {
-      await fsImpl.stat(pathImpl.join(gitDirectory, 'MERGE_HEAD'));
-      return true;
-    } catch (error) {
-      if (error?.code === 'ENOENT') return false;
-      throw error;
+    // Pull integrates by rebasing, so a stopped integration is a rebase in
+    // progress; MERGE_HEAD still counts for a merge someone started by hand.
+    for (const marker of ['rebase-merge', 'rebase-apply', 'MERGE_HEAD']) {
+      try {
+        await fsImpl.stat(pathImpl.join(gitDirectory, marker));
+        return true;
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
     }
+    return false;
   });
 
   const transport = async (plan, controls, deadline) => {
@@ -976,9 +989,9 @@ export function createNetworkOperations({
     const configOutput = await localGit(directory, [
       'config', '--blob', 'HEAD:.gitmodules', '--null', '--get-regexp', '^submodule\\..*\\.(path|url|update)$',
     ], controls, deadline, { allowedCodes: [0, 1, 128] });
-    const treeOutput = await localGit(directory, ['ls-tree', '-rz', '--full-tree', 'HEAD'], controls, deadline,
-      { maxOutputBytes: LFS_DISCOVERY_LIMITS.maxFilesBytes });
-    const gitlinks = treeOutput.split('\0').filter((record) => record.startsWith('160000 ')).map((record) => `${record}\0`).join('');
+    // One listing serves both: gitlinks for submodules, and object sizes for the LFS scan.
+    const { gitlinks, treeObjects } = readTreeListing(await localGit(directory, ['ls-tree', '-rz', '-l', '--full-tree', 'HEAD'], controls, deadline,
+      { maxOutputBytes: LFS_DISCOVERY_LIMITS.maxFilesBytes }));
     const manifest = parseSubmoduleManifest({ gitmodulesConfig: configOutput, gitlinks, recursionDepth: 0 });
     const children = manifest.modules.map((module) => {
       if (!parentEndpoint || !parentRemoteName) return { path: module.path, gitlink: module.gitlink };
@@ -990,7 +1003,7 @@ export function createNetworkOperations({
     const filesOutput = await localGit(directory, ['ls-files', '-z'], controls, deadline,
       { maxOutputBytes: LFS_DISCOVERY_LIMITS.maxFilesBytes, rawOutput: true });
     const scan = await scanLfsFiles(filesOutput, (args, input) => localGit(directory, args, controls, deadline,
-      { input, maxOutputBytes: LFS_DISCOVERY_LIMITS.maxBatchBytes, rawOutput: true }), manifest.modules.map((module) => module.path));
+      { input, maxOutputBytes: LFS_DISCOVERY_LIMITS.maxBatchBytes, rawOutput: true }), manifest.modules.map((module) => module.path), treeObjects);
     if ((scan.attributesOutput || scan.pointerSamples.length || !scan.pointerScanComplete)
       && (!parentEndpoint || !parentRemoteName)) {
       sourceRequired = true;
@@ -1119,9 +1132,9 @@ export function createNetworkOperations({
       const configOutput = await localGit(directory, [
         'config', '--blob', 'HEAD:.gitmodules', '--null', '--get-regexp', '^submodule\\..*\\.(path|url|update)$',
       ], controls, deadline, { allowedCodes: [0, 1, 128] });
-      const treeOutput = await localGit(directory, ['ls-tree', '-rz', '--full-tree', 'HEAD'], controls, deadline,
-        { maxOutputBytes: LFS_DISCOVERY_LIMITS.maxFilesBytes });
-      const gitlinks = treeOutput.split('\0').filter((record) => record.startsWith('160000 ')).map((record) => `${record}\0`).join('');
+      // One listing serves both: gitlinks for submodules, and object sizes for the LFS scan.
+      const { gitlinks, treeObjects } = readTreeListing(await localGit(directory, ['ls-tree', '-rz', '-l', '--full-tree', 'HEAD'], controls, deadline,
+        { maxOutputBytes: LFS_DISCOVERY_LIMITS.maxFilesBytes }));
       const manifest = parseSubmoduleManifest({ gitmodulesConfig: configOutput, gitlinks, recursionDepth: depth });
       for (const module of hydrationPlan.hydrateSubmodules === false ? [] : manifest.modules) {
         if (phaseError(controls, deadline)) throw phaseError(controls, deadline);
@@ -1217,7 +1230,7 @@ export function createNetworkOperations({
       const filesOutput = await localGit(directory, ['ls-files', '-z'], controls, deadline,
         { maxOutputBytes: LFS_DISCOVERY_LIMITS.maxFilesBytes, rawOutput: true });
       const scan = await scanLfsFiles(filesOutput, (args, input) => localGit(directory, args, controls, deadline,
-        { input, maxOutputBytes: LFS_DISCOVERY_LIMITS.maxBatchBytes, rawOutput: true }), manifest.modules.map((module) => module.path));
+        { input, maxOutputBytes: LFS_DISCOVERY_LIMITS.maxBatchBytes, rawOutput: true }), manifest.modules.map((module) => module.path), treeObjects);
       const lfsPath = prefix || '.';
       if (!scan.attributesOutput && !scan.pointerSamples.length && scan.pointerScanComplete) {
         lfs.push({ path: lfsPath, status: 'not-needed' });
@@ -1538,7 +1551,8 @@ export function createNetworkOperations({
             await recordRemoteTrackingRef(plan, controls, integrationContext, deadline, fetchedSha, plan.target.sourceRef);
             mergeStarted = true;
             await controls.markIntegrationStarted();
-            await commandResult(plan, controls, ['merge', '--no-edit', '--no-verify', fetchedSha], integrationContext, deadline);
+            // Local commits are replayed on top of the fetched ones, as pull always did here.
+            await commandResult(plan, controls, ['rebase', '--no-verify', '--no-autostash', fetchedSha], integrationContext, deadline);
             mergeStarted = false;
             await controls.markStepCompleted('updated-local-repository');
             result = { state: 'succeeded' };
@@ -1555,8 +1569,8 @@ export function createNetworkOperations({
         result = terminal('partial', 'TRANSPORT_FAILED', 'Push succeeded, but local upstream configuration failed');
       } else if (plan.target.operation === 'push' && plan.target.forceWithLease && isLeaseConflict(output)) {
         result = terminal('conflicted', 'CONFLICT', 'Push force lease no longer matches the remote ref');
-      } else if (plan.target.operation === 'pull' && /\bCONFLICT\b|automatic merge failed|unmerged files/i.test(output)) {
-        result = terminal('conflicted', 'CONFLICT', 'Pull left merge conflicts in the local repository');
+      } else if (plan.target.operation === 'pull' && /\bCONFLICT\b|automatic merge failed|unmerged files|could not apply/i.test(output)) {
+        result = terminal('conflicted', 'CONFLICT', 'Pull left conflicts in the local repository; resolve them and continue the rebase');
       } else if (mergeStarted && (error.cancelled || error.timedOut || controls.isCancellationRequested())) {
         let mergeInProgress = false;
         try { mergeInProgress = await hasMergeState(plan.directory); } catch {}
@@ -1657,9 +1671,14 @@ export function createNetworkOperations({
         () => resolveRefImpl(plan.directory, fetchPlan.target.destinationRef, { controls, deadline }), controls, deadline,
       )).trim();
       if (!SHA_PATTERN.test(fetchedSha)) throw operationError('STALE_CONFIG', 'Fetched ref is invalid', 409);
+      // What the branch was before integrating, so the result can say whether
+      // the pull brought anything in.
+      const headBefore = String(await awaitPhase(
+        () => resolveRefImpl(plan.directory, headPlan.target.destinationRef, { controls, deadline }), controls, deadline,
+      )).trim().toLowerCase();
       mergeStarted = true;
       await controls.markIntegrationStarted();
-      await commandResult(fetchPlan, controls, ['merge', '--no-edit', '--no-verify', fetchedSha], integrationContext, deadline);
+      await commandResult(fetchPlan, controls, ['rebase', '--no-verify', '--no-autostash', fetchedSha], integrationContext, deadline);
       mergeStarted = false;
       await controls.markStepCompleted('updated-local-repository');
       const hydrated = await hydrateIntegration(fetchPlan, controls, deadline);
@@ -1668,7 +1687,12 @@ export function createNetworkOperations({
         step('pull', hydrated.state === 'cancelled' ? 'cancelled' : 'failed', hydrated.error);
         return completion(hydrated.state === 'cancelled' ? 'cancelled' : 'partial', hydrated.error);
       }
-      step('pull', 'succeeded');
+      // `skipped` here means there was nothing to bring in: the rebase left
+      // the branch where it was.
+      const headAfter = String(await awaitPhase(
+        () => resolveRefImpl(plan.directory, headPlan.target.destinationRef, { controls, deadline }), controls, deadline,
+      )).trim().toLowerCase();
+      step('pull', headAfter === headBefore ? 'skipped' : 'succeeded');
 
       activeStep = 'push';
       const blockedPush = phaseError(controls, deadline);
@@ -1677,6 +1701,15 @@ export function createNetworkOperations({
         () => resolveRefImpl(plan.directory, pushPlan.target.sourceRef, { controls, deadline }), controls, deadline,
       )).toLowerCase();
       if (!SHA_PATTERN.test(pushSha)) throw operationError('STALE_CONFIG', 'Git push source ref is invalid', 409);
+      // The fetch just read the push destination itself (same endpoint, same
+      // ref) and it already holds this commit: there is nothing to publish, so
+      // no second connection to the remote is opened for it.
+      if (pushSha === fetchedSha.toLowerCase() && !pushPlan.target.forceWithLease
+        && pushPlan.rawEndpoint === fetchPlan.rawEndpoint
+        && pushPlan.target.destinationRef === fetchPlan.target.sourceRef) {
+        step('push', 'skipped');
+        return completion('succeeded');
+      }
       pushPlan = { ...pushPlan, sourceSha: pushSha };
       // The pull just moved HEAD, and the transport revision hashes what HEAD
       // says about submodules, LFS and attributes. A change the merge brought
@@ -1709,8 +1742,8 @@ export function createNetworkOperations({
       const redacted = createGitRedactor({
         secrets: [...(context?.secrets ?? []), plan.directory],
       }).error(error);
-      if (activeStep === 'pull' && /\bCONFLICT\b|automatic merge failed|unmerged files/i.test(output)) {
-        const publicFailure = publicError('CONFLICT', 'Sync pull left merge conflicts in the local repository');
+      if (activeStep === 'pull' && /\bCONFLICT\b|automatic merge failed|unmerged files|could not apply/i.test(output)) {
+        const publicFailure = publicError('CONFLICT', 'Sync pull left conflicts in the local repository; resolve them and continue the rebase');
         step('pull', 'conflicted', publicFailure);
         return completion('conflicted', publicFailure);
       }
@@ -2036,7 +2069,10 @@ export function createNetworkOperations({
         }
         const code = ['STALE_REPOSITORY', 'STALE_BINDING', 'STALE_CONFIG', 'REMOTE_CHANGED'].includes(error?.code)
           ? error.code : authorityCode(error);
-        return terminal('conflicted', code, 'Checkout hydration authority changed; plan again');
+        // An access problem is the user's to fix, not authority that moved.
+        return code === 'AUTHENTICATION_REQUIRED'
+          ? terminal('failed', code, 'Checkout hydration needs the repository access fixed')
+          : terminal('conflicted', code, 'Checkout hydration authority changed; plan again');
       }
     }
     const hydration = await hydrateCheckout(plan, controls, deadline);

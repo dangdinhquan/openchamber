@@ -11,7 +11,6 @@ import { normalizeGitOutputPath } from './output-path.js';
 
 import {
   getCurrentIdentity,
-  unsupportedRepositoryRootReason,
   checkoutBranch,
   checkoutCommit,
   cherryPick,
@@ -19,6 +18,8 @@ import {
   createWorktree,
   getWorktreeBootstrapStatus,
   getBranches,
+  getRepositoryRemoteUrls,
+  parseRemoteListing,
   getRepositoryRoot,
   getUnpushedBranchCounts,
   getRangeDiff,
@@ -186,20 +187,19 @@ async function createTempRepo() {
 // resolveBaseRefForLog
 // ---------------------------------------------------------------------------
 
-describe('unsupportedRepositoryRootReason', () => {
-  it('rejects a repository rooted at a filesystem root or the home directory', () => {
-    const home = path.join(os.tmpdir(), 'unsupported-root-home');
-    expect(unsupportedRepositoryRootReason('/', home)).toBe('filesystem-root');
-    expect(unsupportedRepositoryRootReason(path.parse(process.cwd()).root, home)).toBe('filesystem-root');
-    expect(unsupportedRepositoryRootReason(home, home)).toBe('home');
-    expect(unsupportedRepositoryRootReason(`${home}${path.sep}`, home)).toBe('home');
-  });
+describe('getLog on a repository with no commits yet', () => {
+  it('answers an empty history instead of failing, then the first commit appears', async () => {
+    const { tmpDir, git } = await createTempRepo();
+    fs.writeFileSync(path.join(tmpDir, 'a.txt'), 'hello\n');
 
-  it('accepts an ordinary project root, including one directly under home', () => {
-    const home = path.join(os.tmpdir(), 'unsupported-root-home');
-    expect(unsupportedRepositoryRootReason(path.join(home, 'project'), home)).toBeNull();
-    expect(unsupportedRepositoryRootReason(path.join(os.tmpdir(), 'repo'), home)).toBeNull();
-    expect(unsupportedRepositoryRootReason('', home)).toBeNull();
+    const empty = { all: [], latest: null, total: 0 };
+    expect(await getLog(tmpDir, { maxCount: 25 })).toEqual(empty);
+    expect(await getLog(tmpDir, { maxCount: 25, all: true })).toEqual(empty);
+
+    await git.add('a.txt');
+    await git.commit('first');
+    const history = await getLog(tmpDir, { maxCount: 25 });
+    expect(history.all.map((entry) => entry.message)).toEqual(['first']);
   });
 });
 
@@ -2395,6 +2395,19 @@ exec "$REAL_GIT" "$@"
     });
   }, 30_000);
 
+  it('defers a same-repository change request branch to its transfer instead of reporting it missing', async () => {
+    if (!canRunGit()) return;
+
+    await withDataHome(async () => {
+      const { repository } = createRepositoryWithRemote();
+      const input = { ...forkWorktreeInput({ fork: repository, worktreeName: 'mr-7' }), changeRequestTransfer: true };
+
+      // The head is not fetched yet; only the pending transfer is reported.
+      const validation = await validateWorktreeCreate(repository, input);
+      expect(validation.errors.map((error) => error.code)).toEqual(['contributor_transfer_unavailable']);
+    });
+  }, 30_000);
+
   it('rejects a fork branch that moved away from the requested PR head revision', async () => {
     if (!canRunGit()) return;
 
@@ -4510,6 +4523,76 @@ describe.runIf(canRunGit())('getBranches', () => {
     expect(branches.all).toContain('remotes/origin/feature-known');
     expect(branches.all).toContain('feature-known');
     expect(branches.all).not.toContain('remotes/origin/feature-stale');
+  });
+
+  it('answers from local refs without asking any remote when asked for local', async () => {
+    const { repository, remote } = createRepositoryWithRemote({ remoteName: 'origin', defaultBranch: 'react' });
+    const collaborator = createTempDir();
+    runGit(collaborator, ['clone', remote, '.']);
+    runGit(collaborator, ['checkout', '-b', 'remote-only']);
+    runGit(collaborator, ['push', 'origin', 'remote-only']);
+
+    const branches = await getBranches(repository, { remote: 'local' });
+
+    // Only what `git branch -a` knows: a branch nobody fetched is not listed.
+    expect(branches.all).toContain('remotes/origin/react');
+    expect(branches.all).not.toContain('remotes/origin/remote-only');
+  });
+
+  it('reuses a remote\'s answer until its local tracking refs change', async () => {
+    const { repository, remote } = createRepositoryWithRemote({ remoteName: 'origin', defaultBranch: 'react' });
+    expect((await getBranches(repository)).all).not.toContain('remotes/origin/later');
+    const collaborator = createTempDir();
+    runGit(collaborator, ['clone', remote, '.']);
+    runGit(collaborator, ['checkout', '-b', 'later']);
+    runGit(collaborator, ['push', 'origin', 'later']);
+
+    // Within the freshness window the remote is not asked again.
+    expect((await getBranches(repository)).all).not.toContain('remotes/origin/later');
+    // A fetch here changes the tracking refs, so the remote is read again.
+    runGit(repository, ['fetch', 'origin']);
+    expect((await getBranches(repository)).all).toContain('remotes/origin/later');
+  });
+});
+
+describe('parseRemoteListing', () => {
+  it('reads CRLF output as Git for Windows may print it', () => {
+    const listing = [
+      'origin\tgit@github.com:owner/repo.git (fetch)',
+      'origin\tgit@github.com:owner/push.git (push)',
+      'mirror\thttps://example.com/a b.git (fetch)',
+      'mirror\thttps://example.com/a b.git (push)',
+      'bare\t',
+      '',
+    ].join('\r\n');
+    expect(parseRemoteListing(['bare', 'mirror', 'origin'], listing)).toEqual([
+      { name: 'bare', fetchUrl: 'bare', pushUrl: 'bare' },
+      { name: 'mirror', fetchUrl: 'https://example.com/a b.git', pushUrl: 'https://example.com/a b.git' },
+      { name: 'origin', fetchUrl: 'git@github.com:owner/repo.git', pushUrl: 'git@github.com:owner/push.git' },
+    ]);
+  });
+});
+
+describe.runIf(canRunGit())('getRepositoryRemoteUrls', () => {
+  it('reports each remote as `git remote get-url [--push]` does, from one listing', async () => {
+    const repository = createTempDir();
+    runGit(repository, ['init', '-b', 'main']);
+    runGit(repository, ['remote', 'add', 'origin', 'git@github.com:owner/repo.git']);
+    runGit(repository, ['remote', 'set-url', '--push', 'origin', 'git@github.com:owner/push.git']);
+    runGit(repository, ['remote', 'add', 'rewritten', 'gh:other/repo.git']);
+    runGit(repository, ['config', 'url.https://github.com/.insteadOf', 'gh:']);
+    runGit(repository, ['config', 'remote.bare.fetch', '+refs/heads/*:refs/remotes/bare/*']);
+
+    const remotes = await getRepositoryRemoteUrls(repository);
+    const expected = remotes.map(({ name }) => {
+      const read = (args) => { try { return runGit(repository, args).trim(); } catch { return ''; } };
+      const fetchUrl = read(['remote', 'get-url', name]);
+      return { name, fetchUrl, pushUrl: read(['remote', 'get-url', '--push', name]) || fetchUrl };
+    });
+
+    expect(remotes).toEqual(expected);
+    expect(remotes.find((remote) => remote.name === 'rewritten')?.fetchUrl).toBe('https://github.com/other/repo.git');
+    expect(remotes.find((remote) => remote.name === 'origin')?.pushUrl).toBe('git@github.com:owner/push.git');
   });
 });
 

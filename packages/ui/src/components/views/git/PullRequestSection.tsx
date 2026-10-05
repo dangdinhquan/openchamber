@@ -25,6 +25,7 @@ import { useOpenSourceControlSettings } from '@/hooks/useOpenSourceControlSettin
 import { useWalkthroughStore } from '@/stores/useWalkthroughStore';
 import { WALKTHROUGH_ACTION_CLASS } from '@/components/views/walkthrough/walkthroughAction';
 import { GitHubAccountControl } from '@/components/github/GitHubAccountControl';
+import { useRepositoryHost } from '@/components/references/referenceSources';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { formatDateTimeForPreference } from '@/lib/timeFormat';
 import { useSessionUIStore } from '@/sync/session-ui-store';
@@ -33,7 +34,8 @@ import { buildLinkedIssue } from '@/lib/linkedIssues';
 import { normalizePath } from '@/lib/pathNormalization';
 import { useInlineCommentDraftStore, type InlineCommentDraftTarget } from '@/stores/useInlineCommentDraftStore';
 import { getSourceControlAuthKey, getSourceControlReadContextAuthState, useSourceControlAuthStore } from '@/stores/useSourceControlAuthStore';
-import { getSourceControlStatusKey, useGitHubPrStatusStore, type SourceControlStatus } from '@/stores/useGitHubPrStatusStore';
+import { getSourceControlStatusKey, useBranchTrackedPulls, useGitHubPrStatusStore, type SourceControlStatus } from '@/stores/useGitHubPrStatusStore';
+import { useTrackedItems } from '@/lib/trackedItems/interest';
 import { getChangeRequestContextKey, useChangeRequestContextStore } from '@/stores/useChangeRequestContextStore';
 import type {
   CIRun,
@@ -44,11 +46,13 @@ import type {
   SourceControlExistingMutationTarget,
   SourceControlReadContext,
 } from '@/lib/api/types';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type I18nKey, type I18nParams } from '@/lib/i18n';
+import { changeRequestCopy } from '@/lib/source-control/changeRequestCopy';
 import { formatChangeRequestReference, getSourceControlBaseUrl, getSourceControlProviderLabel } from '@/lib/source-control/identity';
 import { useRepositoryBinding } from '@/lib/source-control/repository-binding';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { getDetectedUpstreamContextKey, loadDetectedUpstreamRepo } from './detectedUpstreamRepo';
+import type { SourceControlProvider } from '@/lib/source-control/types';
 import {
   hasUnknownMutationOutcomeCode,
   reconcileUnknownMutationOutcome,
@@ -299,7 +303,21 @@ export const PullRequestSection: React.FC<{
   remoteBranches?: string[];
   onGeneratedDescription?: () => void;
 }> = ({ directory, branch, baseBranch, trackingBranch, remoteBranches = [], onGeneratedDescription }) => {
-  const { t } = useI18n();
+  const { t: translate } = useI18n();
+  // Named even when no account there can read the project, so a GitLab
+  // project with a lapsed account asks for GitLab, not GitHub.
+  const repositoryHost = useRepositoryHost(directory);
+  // Every change-request message in this section speaks the host's wording:
+  // merge requests on GitLab, pull requests elsewhere.
+  const t = React.useCallback(
+    (key: I18nKey, params?: I18nParams) => translate(changeRequestCopy(key, repositoryHost?.provider), params),
+    [repositoryHost?.provider, translate],
+  );
+  // How the attached comment or job names its change request: GitLab's `!N`, GitHub's `PR #N`.
+  const changeRequestNumberLabel = React.useCallback(
+    (number: number | undefined) => (repositoryHost?.provider === 'gitlab' ? `!${number ?? ''}` : `PR #${number ?? ''}`),
+    [repositoryHost?.provider],
+  );
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
   const openSourceControlSettings = useOpenSourceControlSettings();
   const { sourceControl } = useRuntimeAPIs();
@@ -372,6 +390,9 @@ export const PullRequestSection: React.FC<{
   }, [beginActiveSourceControlContextsLoad, binding.contexts, binding.scope.runtimeKey, commitActiveSourceControlContexts, directory, releaseActiveSourceControlContexts, sourceControlAuthEntries, sourceControlContextsOwnerId]);
   const readContexts = binding.contexts;
   const readContext = readContexts[0] ?? null;
+  const hostAuthChecked = useSourceControlAuthStore((state) => repositoryHost
+    ? state.entries[getSourceControlAuthKey(repositoryHost)]?.hasChecked === true
+    : false);
   const selectedRemoteName = readContext?.primaryRemote ?? null;
   const sourceControlAuthKey = React.useMemo(
     () => readContext ? getSourceControlAuthKey(readContext) : '',
@@ -444,6 +465,10 @@ export const PullRequestSection: React.FC<{
     capturedRuntimeKey === getRuntimeKey() && capturedStatusKey === mutationScopeKeyRef.current
   ), []);
   const statusEntry = useGitHubPrStatusStore((state) => state.entries[prStatusKey]);
+  // The open change request shown here is followed by the server, which pushes
+  // its state and checks; nothing here polls.
+  const followedKeys = React.useMemo(() => (prStatusKey ? [prStatusKey] : []), [prStatusKey]);
+  useTrackedItems(useBranchTrackedPulls(followedKeys));
 
   const isLoading = statusEntry?.isLoading ?? false;
   const status = sourceControlAuth.connected ? statusEntry?.status ?? null : null;
@@ -839,14 +864,15 @@ export const PullRequestSection: React.FC<{
     const location = comment.path ? ` · ${comment.path}${comment.line ? `:${comment.line}` : ''}` : '';
     useInlineCommentDraftStore.getState().addDraft(target, {
       source: 'pr-comment',
-      fileLabel: `PR #${pr?.number ?? ''} ${authorLabel}${location}`,
+      fileLabel: `${changeRequestNumberLabel(pr?.number)} ${authorLabel}${location}`,
+      ...(repositoryHost?.provider ? { provider: repositoryHost.provider } : {}),
       startLine: comment.line ?? 0,
       endLine: comment.line ?? 0,
       code: comment.body,
       language: 'markdown',
       text: '',
     });
-  }, [pr?.number]);
+  }, [changeRequestNumberLabel, pr?.number, repositoryHost?.provider]);
 
   const renderCheckRunSummary = React.useCallback((run: CIRun, options?: { hideHeader?: boolean }) => {
     const status = run.status || 'unknown';
@@ -1030,7 +1056,8 @@ export const PullRequestSection: React.FC<{
         ].filter(Boolean).join('\n\n');
         draftStore.addDraft(target, {
           source: 'pr-check',
-          fileLabel: `PR #${pr.number} · ${run.name}`,
+          fileLabel: `${changeRequestNumberLabel(pr.number)} · ${run.name}`,
+          ...(repositoryHost?.provider ? { provider: repositoryHost.provider } : {}),
           startLine: 0,
           endLine: 0,
           code: payload,
@@ -1044,7 +1071,7 @@ export const PullRequestSection: React.FC<{
     } finally {
       setIsAttachingChecks(false);
     }
-  }, [directory, ensurePrContext, pr, projectSelector, readContext, resolveDraftTarget, sourceControl, t]);
+  }, [changeRequestNumberLabel, directory, ensurePrContext, pr, projectSelector, readContext, repositoryHost?.provider, resolveDraftTarget, sourceControl, t]);
 
   const sendCommentsToChat = React.useCallback(async () => {
     if (!directory || !pr || !readContext) return;
@@ -1260,9 +1287,10 @@ export const PullRequestSection: React.FC<{
         : readContext
           ? `${readContext.primaryRemote}/${targetBaseBranch}`
           : targetBaseBranch;
-      const payload: { base: string; head: string; context?: string; files?: string[] } = {
+      const payload: { base: string; head: string; context?: string; files?: string[]; changeRequestProvider?: SourceControlProvider } = {
         base: baseRef,
         head: branch,
+        ...(readContext?.provider ? { changeRequestProvider: readContext.provider } : {}),
       };
       if (additionalContext) {
         payload.context = additionalContext;
@@ -1510,8 +1538,10 @@ export const PullRequestSection: React.FC<{
       <section className="border-0 bg-transparent rounded-none">
         <div className="space-y-1 pt-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="typography-ui-header font-semibold text-foreground">{t('gitView.pullRequest.title')}</div>
-            <GitHubAccountControl />
+            <div className="typography-ui-header font-semibold text-foreground">
+              {t('gitView.pullRequest.title')}
+            </div>
+            <GitHubAccountControl identity={repositoryHost ?? undefined} />
           </div>
           <div className="typography-micro text-muted-foreground">
             {t('gitView.pullRequest.availableOnFeatureBranches')}
@@ -1531,8 +1561,12 @@ export const PullRequestSection: React.FC<{
     && mergeMethods.includes(mergeMethod),
   );
   const isConnected = Boolean(status?.connected);
-  const shouldShowConnectionNotice = Boolean(statusIdentity && sourceControlAuthChecked && status?.connected === false);
-  const providerName = statusIdentity ? getSourceControlProviderLabel(statusIdentity.provider) : null;
+  // A project on a host where no account can read it gets the same notice as
+  // one whose account dropped mid-way.
+  const hostUnreadable = Boolean(!readContext && repositoryHost && binding.status === 'ready' && hostAuthChecked);
+  const shouldShowConnectionNotice = Boolean(statusIdentity && sourceControlAuthChecked && status?.connected === false) || hostUnreadable;
+  const noticeIdentity = statusIdentity ?? repositoryHost;
+  const providerName = noticeIdentity ? getSourceControlProviderLabel(noticeIdentity.provider) : null;
   const prVisualState = getPrVisualState(status);
   const prColorVar = prVisualState ? `var(--pr-${prVisualState})` : 'var(--status-info)';
   const prStateIconName = prVisualState === 'draft'
@@ -1545,7 +1579,9 @@ export const PullRequestSection: React.FC<{
   const prStatusText = pr
     ? [
         `${pr.state}${pr.draft ? ' (draft)' : ''}`,
-        pr.mergeable === false ? t('gitView.pr.notMergeable') : null,
+        // Whether it can merge is a question for an open one only: GitLab reports
+        // a merged or closed merge request as not mergeable.
+        pr.state === 'open' && pr.mergeable === false ? t('gitView.pr.notMergeable') : null,
         pr.state === 'open' && typeof pr.mergeableState === 'string' && pr.mergeableState && pr.mergeableState !== 'unknown'
           ? pr.mergeableState
           : null,
@@ -1626,7 +1662,7 @@ export const PullRequestSection: React.FC<{
               ) : null}
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
-              {showWalkthroughAction && readContext?.provider === 'github' ? (
+              {showWalkthroughAction && (readContext?.provider === 'github' || readContext?.provider === 'gitlab') ? (
                 <Button
                   variant="outline"
                   size="sm"

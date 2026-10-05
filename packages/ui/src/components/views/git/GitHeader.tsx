@@ -28,6 +28,9 @@ import { identityDisplayName } from '@/lib/source-control/identity';
 import { cn } from '@/lib/utils';
 import { describeIdentityApplicability, type IdentityApplicability } from '@/lib/source-control/applyIdentity';
 import { useDeviceInfo } from '@/lib/device';
+import { changeRequestCopy } from '@/lib/source-control/changeRequestCopy';
+import { formatChangeRequestReference } from '@/lib/source-control/identity';
+import type { SourceControlProvider } from '@/lib/source-control/types';
 
 type SyncAction = 'fetch' | 'pull' | 'sync' | 'publish' | null;
 
@@ -67,6 +70,8 @@ interface GitHeaderProps {
   onOpenUpdateBranch?: () => void;
   onOpenReintegrateCommits?: () => void;
   pullRequest?: GitHubPullRequest | null;
+  /** Whose change request `pullRequest` is; GitLab's reads `!N` and "merge request". */
+  pullRequestProvider?: SourceControlProvider | null;
   prChecks?: GitHubChecksSummary | null;
   onOpenPullRequest?: () => void;
   // Nested repository picker: shown when the Git tab operates on a repository
@@ -89,7 +94,7 @@ const IDENTITY_ICON_MAP: Record<string, IconName> = {
   fingerprint: 'fingerprint',
   // Identities made from a connected account carry the provider's mark.
   github: 'github',
-  gitlab: 'gitlab-fill',
+  gitlab: 'gitlab',
 };
 
 const IDENTITY_COLOR_MAP: Record<string, string> = {
@@ -206,7 +211,9 @@ export const IdentityDropdown: React.FC<IdentityDropdownProps> = ({
             </Button>
           </DropdownMenuTrigger>
         </TooltipTrigger>
-        <TooltipContent sideOffset={8}>{attention ?? t('gitView.header.identityTooltip')}</TooltipContent>
+        <TooltipContent sideOffset={8}>
+          {attention ?? (iconOnly && activeProfile ? identityDisplayName(activeProfile, t) : t('gitView.header.identityTooltip'))}
+        </TooltipContent>
       </Tooltip>
       {/* The list grows with the person's identities, and a trigger low on a
           form leaves little room beneath it, so the menu scrolls inside
@@ -338,6 +345,7 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
   onOpenUpdateBranch,
   onOpenReintegrateCommits,
   pullRequest,
+  pullRequestProvider,
   prChecks,
   onOpenPullRequest,
   repositoryOptions,
@@ -447,7 +455,7 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
             className="size-3.5"
             style={{ color: `var(--pr-${prVisualState})` }}
           />
-          <span className="tabular-nums text-foreground/80">{t('gitView.pr.numberLabel', { number: pullRequest.number })}</span>
+          <span className="tabular-nums text-foreground/80">{pullRequestProvider === 'gitlab' ? formatChangeRequestReference('gitlab', pullRequest.number) : t('gitView.pr.numberLabel', { number: pullRequest.number })}</span>
           {prChecksColor ? (
             <span
               aria-hidden="true"
@@ -457,7 +465,7 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
           ) : null}
         </Button>
       </TooltipTrigger>
-      <TooltipContent sideOffset={8}>{t('gitView.header.openPullRequest')}</TooltipContent>
+      <TooltipContent sideOffset={8}>{t(changeRequestCopy('gitView.header.openPullRequest', pullRequestProvider))}</TooltipContent>
     </Tooltip>
   ) : null;
 
@@ -493,10 +501,10 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
     />
   ) : null;
 
-  // The identity names the whole configuration a repository acts as, so the
-  // button says which one rather than only marking that there is one.
+  // The header keeps the identity to its icon; the menu and the tooltip name it.
   const identityControl = (
     <IdentityDropdown
+      iconOnly
       activeProfile={activeIdentityProfile}
       identities={availableIdentities}
       onSelect={onSelectIdentity}

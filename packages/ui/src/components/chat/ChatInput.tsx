@@ -66,7 +66,7 @@ import { usePinnedComposerSelection } from './pinnedComposerSelection';
 import { useChatSurfaceMode } from './useChatSurfaceMode';
 import { MobileAgentButton } from './MobileAgentButton';
 import { MobileModelButton } from './MobileModelButton';
-import { useCurrentSessionActivity, useSessionActivity } from '@/hooks/useSessionActivity';
+import { useSessionActivity } from '@/hooks/useSessionActivity';
 import { toast } from '@/components/ui';
 // useMessageStore removed — messages now come from sync system
 import { isVSCodeRuntime } from '@/lib/desktop';
@@ -232,6 +232,7 @@ import {
     mergeSessionInputHistory,
 } from './inputHistory';
 import { useScopedBlockingForms, useScopedBlockingPermissions, useUserMessageHistory } from '@/sync/sync-context';
+import { changeRequestCopy } from '@/lib/source-control/changeRequestCopy';
 
 // Lazy like in ChatMessage: a static import would pull the @pierre/diffs and
 // Shiki stacks into the eager startup graph for a dialog opened on demand.
@@ -1181,7 +1182,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // composer controls the temporary fork, so the stop button and send-button
     // state follow the FORK's activity; the queue affordance stays tied to the
     // main session (queued messages always belong to the main chat).
-    const { phase: currentSessionPhase } = useCurrentSessionActivity();
+    // The column's session: a chat pinned in the side panel shows its own
+    // send/stop state, not the main chat's.
+    const { phase: currentSessionPhase } = useSessionActivity(currentSessionId, currentSessionDirectoryForSync ?? currentDirectory ?? undefined);
     const { phase: btwSessionPhase } = useSessionActivity(btwSessionId, btwDirectory ?? undefined);
     const sessionPhase = isBtwActive ? btwSessionPhase : currentSessionPhase;
     const autoReviewRunning = useAutoReviewStore(React.useCallback((state) => {
@@ -1419,7 +1422,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             if (part.kind !== 'context') continue;
             const payload = part.metadata[CONTEXT_METADATA_KEY];
             if (payload.kind === 'repository-issue') {
-                restored.push({ kind: 'repository-issue', number: payload.number, title: payload.title, url: payload.url, contextText: part.text });
+                restored.push({
+                    kind: 'repository-issue',
+                    ...(payload.provider ? { provider: payload.provider } : {}),
+                    number: payload.number,
+                    title: payload.title,
+                    url: payload.url,
+                    contextText: part.text,
+                });
             } else if (payload.kind === 'change-request') {
                 // The captured context is final: whatever diff it includes is
                 // already in the text, and the branches were not captured.
@@ -3646,8 +3656,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                 url={reference.url}
                                 author={reference.author}
                                 branches={reference.head && reference.base ? { head: reference.head, base: reference.base } : undefined}
-                                openInBrowserLabel={t('chat.chatInput.linked.pr.openInBrowserAria')}
-                                removeLabel={t('chat.chatInput.linked.pr.removeAria')}
+                                openInBrowserLabel={t(changeRequestCopy('chat.chatInput.linked.pr.openInBrowserAria', reference.provider))}
+                                removeLabel={t(changeRequestCopy('chat.chatInput.linked.pr.removeAria', reference.provider))}
                                 onReopenPicker={() => setReferencePicker({ source: 'github', kind: 'pull' })}
                                 onRemove={remove}
                             />

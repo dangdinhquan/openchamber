@@ -826,6 +826,8 @@ describe('GitLab routes', () => {
       account: { provider: 'gitlab', instance: origin, accountId: `${origin}#9` },
       user: expect.objectContaining({ id: 9 }),
       renews: [],
+      // Who the account is, so bindings left on this user's gone account move to it.
+      credential: { credentialRevision: 1, providerUserId: `${origin}#9` },
     });
     const response = await request(app).get('/api/source-control/gitlab/issues/list')
       .query({ instance: origin, directory: '/repo' }).expect(200);
@@ -1085,3 +1087,4 @@ describe('GitLab routes', () => {
     expect(active.body).toMatchObject({ connected: true, cli: { available: true, active: true } });
   });
 });
+

@@ -321,6 +321,8 @@ export interface GitBranchDetails {
   behind?: number;
 }
 
+export type GitBranchListOptions = { remote?: 'local' };
+
 export interface GitBranch {
   all: string[];
   current: string;
@@ -957,6 +959,8 @@ export interface GitWorktreeCreateResult {
   directoryCreated?: true;
   bootstrapStatus?: GitWorktreeBootstrapStatus;
   sourceFetchFailed?: true;
+  /** Set when the failed fetch was the repository's access: an account that needs attention, refused credentials. */
+  sourceFetchReason?: 'access';
   provenance?: GitContributorWorktreeProvenance;
 }
 
@@ -1046,7 +1050,12 @@ export interface GitAPI {
   unstageGitHunk?(directory: string, filePath: string, patch: string): Promise<void>;
   revertGitHunk?(directory: string, filePath: string, patch: string): Promise<void>;
   isLinkedWorktree(directory: string): Promise<boolean>;
-  getGitBranches(directory: string): Promise<GitBranch>;
+  /**
+   * `remote: 'local'` lists what local refs know, without asking each remote
+   * over the network; for callers that need only the checked-out branch and
+   * its upstream. Runtimes that never ask remotes ignore it.
+   */
+  getGitBranches(directory: string, options?: GitBranchListOptions): Promise<GitBranch>;
   getGitUnpushedBranchCounts(directory: string, branches: string[]): Promise<GitUnpushedBranchCounts>;
   deleteGitBranch(directory: string, payload: GitDeleteBranchPayload): Promise<{ success: boolean }>;
   removeRemote(directory: string, payload: GitRemoveRemotePayload): Promise<{ success: boolean }>;
@@ -1559,16 +1568,6 @@ export type GitHubIssueLiveSummary = GitHubPullRequestRef & {
   state: 'open' | 'completed' | 'not_planned';
 };
 
-export type GitHubPullRequestSummariesResult =
-  | { connected: false }
-  | {
-      connected: true;
-      /** Server-side stamp of when GitHub was asked (ms epoch). */
-      fetchedAt: number;
-      /** PRs and issues GitHub could not resolve are absent: unknown, not closed. */
-      summaries: GitHubPullRequestLiveSummary[];
-      issueSummaries: GitHubIssueLiveSummary[];
-    };
 
 export type GitHubIssueLabel = {
   name: string;
@@ -1826,15 +1825,6 @@ export interface SourceControlAPI {
   githubReferences(context: SourceControlReadContext, options: GitHubReferencesOptions): Promise<GitHubReferencesResult>;
   /** GitHub only: comments of one item the picker previews, and a PR's size, review and checks. Throws on failure. */
   githubReferenceDetail(context: SourceControlReadContext, item: GitHubPullRequestRef): Promise<GitHubReferenceDetailResult>;
-  /**
-   * GitHub only: live state of PRs and issues already known by number, read
-   * with `accountId`, or with the current github.com account when it is null.
-   */
-  githubSummaries(
-    accountId: string | null,
-    refs: GitHubPullRequestRef[],
-    issueRefs?: GitHubPullRequestRef[],
-  ): Promise<GitHubPullRequestSummariesResult>;
 }
 
 export interface RemoteClientRecord {
@@ -2055,10 +2045,6 @@ export type LinearIssueLiveSummary = {
   state: { name: string; type: LinearStateType };
 };
 
-/** Issues the current workspace does not have are left out. */
-export type LinearIssueSummariesResult =
-  | { connected: false }
-  | { connected: true; issues: LinearIssueLiveSummary[] };
 
 export type LinearIssueStatesResult = {
   connected: boolean;
@@ -2123,8 +2109,6 @@ export interface LinearAPI {
   authActivate(organizationId: string): Promise<LinearAuthStatus>;
   issuesList(options?: LinearIssuesListOptions): Promise<LinearIssuesListResult>;
   issueGet(id: string): Promise<LinearIssueGetResult>;
-  /** At most 50 identifiers. Throws on failure; disconnected is `{ connected: false }`. */
-  issueSummaries(identifiers: string[]): Promise<LinearIssueSummariesResult>;
   issueStates(teamId: string): Promise<LinearIssueStatesResult>;
   issueUpdate(input: LinearIssueUpdateInput): Promise<LinearIssueUpdateResult>;
   mappingGet(): Promise<LinearMappingResult>;

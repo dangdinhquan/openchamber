@@ -83,7 +83,7 @@ import { cn } from '@/lib/utils';
 import { generateCommitMessage as generateSessionCommitMessage, getGitWorktreeBootstrapStatus } from '@/lib/gitApi';
 import { sessionEvents } from '@/lib/sessionEvents';
 import { useI18n } from '@/lib/i18n';
-import { BoundGitNetworkOperationError, GitOperationResultError, runBoundGitNetworkOperation, runContributorAwarePush } from '@/lib/boundGitNetworkOperation';
+import { BoundGitNetworkOperationError, GitOperationResultError, runBoundGitNetworkOperation, runContributorAwarePush, describeGitSyncOutcome, type GitSyncOutcome } from '@/lib/boundGitNetworkOperation';
 import { useGitOperationRecovery } from './git/useGitOperationRecovery';
 import { GitOperationStatus } from './git/GitOperationStatus';
 import { PendingGitOperationError } from '@/lib/source-control/git-operation-recovery';
@@ -1081,6 +1081,17 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     await fetchLog(gitDirectory, git, logMaxCountLocal);
   }, [gitDirectory, git, fetchLog, logMaxCountLocal]);
 
+  // After a commit or a transfer the control waits for the status only: it is
+  // what says what is staged and how far ahead the branch is. The branch list
+  // asks every remote over the network and the log reads history, so both
+  // follow in the background instead of holding the button for seconds.
+  const refreshAfterGitAction = React.useCallback(async (onBackgroundSettled?: () => void) => {
+    if (!gitDirectory) return;
+    const background = Promise.allSettled([fetchBranches(gitDirectory, git), refreshLog()]);
+    if (onBackgroundSettled) void background.then(onBackgroundSettled);
+    await fetchStatus(gitDirectory, git).catch(() => undefined);
+  }, [gitDirectory, git, fetchBranches, fetchStatus, refreshLog]);
+
   const refreshIdentity = React.useCallback(async () => {
     if (!gitDirectory) return;
     await fetchIdentity(gitDirectory, git);
@@ -1190,11 +1201,12 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     if (!recovery) return;
     setSyncAction(action);
     const actionLabel = t(action === 'fetch' ? 'gitView.sync.fetch' : action === 'pull' ? 'gitView.sync.pull' : action === 'publish' ? 'gitView.publish.title' : 'gitView.sync.syncChanges');
+    let syncOutcome: GitSyncOutcome | null = null;
 
     try {
       if (action === 'sync' || action === 'publish') {
         const execute = await publishChooser.prepare(action === 'publish' ? 'push' : 'sync', { forceChoose, onOperation: recovery.onOperation });
-        await execute();
+        syncOutcome = describeGitSyncOutcome(await execute());
       } else if (remote && status) {
         await runBoundGitNetworkOperation({
           action, directory: gitDirectory, remoteName: remote.name, status, sourceControl, git, onOperation: recovery.onOperation,
@@ -1209,13 +1221,19 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
       } else if (action === 'pull' && remote) {
         toast.success(t('gitView.toast.pulledFromRemote', { name: remote.name }));
       } else if (action === 'sync') {
-        toast.success(t('gitView.toast.syncedChanges'));
+        // Say what happened, as `git` does: nothing, a pull, a push, or both.
+        toast.success(syncOutcome?.kind === 'up-to-date'
+          ? t('gitView.toast.alreadyUpToDate')
+          : syncOutcome?.kind === 'pulled'
+            ? t('gitView.toast.pulledFromRemote', { name: syncOutcome.remoteName })
+            : syncOutcome?.kind === 'pushed'
+              ? t('gitView.toast.pushedToUpstream', { name: syncOutcome.remoteName })
+              : t('gitView.toast.syncedChanges'));
       } else if (action === 'publish') {
         toast.success(t('gitView.publish.succeeded'));
       }
 
-      await refreshStatusAndBranches(false);
-      await refreshLog();
+      await refreshAfterGitAction();
     } catch (err) {
       if (err instanceof GitOperationResultError || err instanceof PendingGitOperationError) {
         // The card under the header carries the details; the toast says that
@@ -1224,7 +1242,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
         if (err instanceof GitOperationResultError && err.read.availability === 'available') {
           toast.error(t('gitView.toast.syncActionFailed', { action: actionLabel }), { description: err.message || undefined });
         }
-        if (recovery.isCurrent()) await Promise.allSettled([refreshStatusAndBranches(false), refreshLog()]);
+        if (recovery.isCurrent()) await refreshAfterGitAction();
         if (recovery.isCurrent() && err instanceof GitOperationResultError && err.read.availability === 'available'
           && err.read.operation.state === 'conflicted' && err.read.operation.error.code === 'CONFLICT') {
           // A pull merges the fetched commits, so its conflicts leave a merge in progress.
@@ -1239,10 +1257,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
         toast.info(publishChooser.errorMessage(err));
         return;
       }
-      await Promise.allSettled([
-        refreshStatusAndBranches(false),
-        refreshLog(),
-      ]);
+      await refreshAfterGitAction();
       const message =
         err instanceof BoundGitNetworkOperationError
           ? err.code === 'contributor-publish-cancelled-after-update'
@@ -1323,30 +1338,24 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
         recovery = operationRecovery.start();
         if (!recovery) {
           toast.warning(t('gitView.publish.commitKept'));
-          await Promise.allSettled([refreshStatusAndBranches(false), refreshLog()]);
+          await refreshAfterGitAction();
           return;
         }
-        recovery.commitCreated();
         const executePush = await publishChooser.prepare('push', { onOperation: recovery.onOperation });
         setSyncAction('publish');
         await executePush();
         commitOutcome = 'published';
         toast.success(t('gitView.publish.succeeded'));
         triggerFireworks();
-        await refreshStatusAndBranches(false);
-      } else {
-        await refreshStatusAndBranches(false);
       }
-
-      await refreshLog();
-      setIntegrateRefreshKey((v) => v + 1);
+      await refreshAfterGitAction(() => setIntegrateRefreshKey((v) => v + 1));
     } catch (err) {
       if (options.pushAfter && commitOutcome === 'local') toast.warning(t('gitView.publish.commitKept'));
       if (err instanceof GitOperationResultError || err instanceof PendingGitOperationError) {
         if (err instanceof GitOperationResultError && err.read.availability === 'available') {
           toast.error(t('gitView.toast.pushFailed'), { description: err.message || undefined });
         }
-        await Promise.allSettled([refreshStatusAndBranches(false), refreshLog()]);
+        await refreshAfterGitAction();
         return;
       }
       if (err instanceof BoundGitNetworkOperationError && err.code === 'stale-runtime') return;
@@ -1354,12 +1363,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
         toast.info(publishChooser.errorMessage(err));
         return;
       }
-      if (options.pushAfter) {
-        await Promise.allSettled([
-          refreshStatusAndBranches(false),
-          refreshLog(),
-        ]);
-      }
+      if (options.pushAfter) await refreshAfterGitAction();
       const message = err instanceof BoundGitNetworkOperationError
         ? err.code === 'contributor-publish-cancelled-after-update'
           ? t('gitView.toast.contributorPublishCancelledAfterUpdate')
@@ -2416,6 +2420,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
     // none found, or settling on the auto-selected repository).
     return (
       <NestedRepoResolutionStates
+        root={currentDirectory}
         rootIsGitRepo={rootIsGitRepo}
         resolvedIsGitRepo={isGitRepo}
         nestedRepos={nestedRepos}
@@ -2471,6 +2476,7 @@ export const GitView: React.FC<GitViewProps> = ({ isActive }) => {
             onOpenUpdateBranch={canShowBranchWorkflows ? () => setIsUpdateBranchDialogOpen(true) : undefined}
             onOpenReintegrateCommits={integrateCommitsProps ? () => setIsIntegrateCommitsDialogOpen(true) : undefined}
             pullRequest={prChipStatus?.changeRequest ?? prChipStatus?.pr ?? null}
+            pullRequestProvider={prChipStatus?.changeRequest?.provider ?? null}
             prChecks={prChipStatus?.ci?.summary ?? prChipStatus?.checks ?? null}
             onOpenPullRequest={
               gitDirectory ? () => openContextSurface(gitDirectory, 'pr') : undefined

@@ -11,6 +11,7 @@ import type {
   GitPathDiffResponse,
   GetGitFileDiffOptions,
   GitBranch,
+  GitBranchListOptions,
   GitUnpushedBranchCounts,
   GitDeleteBranchPayload,
   GitRemoveRemotePayload,
@@ -759,6 +760,8 @@ const transportMatches = (
 
 subscribeGitStatusInvalidations((directory) => {
   clearGitStatusCache(getRuntimeKey(), directory);
+  // A mutation can also turn a directory into a repository (Git initialized).
+  gitRepoCache.delete(getDirectoryCacheKey(getRuntimeKey(), directory));
 });
 
 const invalidateGitStatusCache = (directory: string): void => {
@@ -1191,8 +1194,8 @@ export async function isLinkedWorktree(directory: string): Promise<boolean> {
   return Boolean(data.linked);
 }
 
-export async function getGitBranches(directory: string): Promise<GitBranch> {
-  const response = await runtimeFetch(buildUrl(`${API_BASE}/branches`, directory));
+export async function getGitBranches(directory: string, options?: GitBranchListOptions): Promise<GitBranch> {
+  const response = await runtimeFetch(buildUrl(`${API_BASE}/branches`, directory, options?.remote ? { remote: options.remote } : undefined));
   if (!response.ok) {
     throw new Error(`Failed to get branches: ${response.statusText}`);
   }

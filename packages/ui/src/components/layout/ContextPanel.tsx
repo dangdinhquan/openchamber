@@ -23,6 +23,7 @@ const PlanView = lazyWithChunkRecovery(() => import('@/components/views/PlanView
 import { ProjectContextPanel } from './RightSidebarTabs';
 import { SidebarFilesTree } from './SidebarFilesTree';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useRepositoryReferenceProvider } from '@/components/references/referenceSources';
 import { useGuestSurfaces } from '@/hooks/useGuestSurfaces';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
@@ -84,6 +85,7 @@ import { isPluginContextPanelMode, pluginIdFromMode, type PluginContextPanelMode
 import { getContextSurfaceWidthFraction } from '@/lib/surfaces/registry';
 import { isEditorEventTarget } from '@/lib/editorFocus';
 import { isTerminalEventTarget } from '@/lib/terminalFocus';
+import { changeRequestCopy } from '@/lib/source-control/changeRequestCopy';
 
 const CONTEXT_PANEL_MIN_WIDTH = 320;
 const CONTEXT_PANEL_DEFAULT_WIDTH = 600;
@@ -505,6 +507,12 @@ const truncateTabLabel = (value: string, maxChars: number): string => {
 export const ContextPanel: React.FC = () => {
   const { t } = useI18n();
   const effectiveDirectory = useEffectiveDirectory() ?? '';
+  const repositoryProvider = useRepositoryReferenceProvider(effectiveDirectory || null);
+  // Tab names in this repository's words: a GitLab project's change request tab is a merge request.
+  const tabT = React.useCallback<TranslateFn>(
+    (key, params) => t(changeRequestCopy(key, repositoryProvider), params),
+    [repositoryProvider, t],
+  );
   const directoryKey = React.useMemo(() => normalizeDirectoryKey(effectiveDirectory), [effectiveDirectory]);
 
   const panelState = useUIStore((state) => (directoryKey ? state.contextPanelByDirectory[directoryKey] : undefined));
@@ -896,7 +904,7 @@ export const ContextPanel: React.FC = () => {
   );
 
   const tabItems = React.useMemo(() => activeModeTabs.map((tab) => {
-    const rawLabel = getTabLabel(tab, sessionTitleById, t);
+    const rawLabel = getTabLabel(tab, sessionTitleById, tabT);
     const label = truncateTabLabel(rawLabel, CONTEXT_TAB_LABEL_MAX_CHARS);
     const tabPathLabel = getRelativePathLabel(tab.targetPath, effectiveDirectory);
     return {
@@ -1069,9 +1077,14 @@ export const ContextPanel: React.FC = () => {
         />
       ) : (
         <div className="flex min-w-0 flex-1 items-center gap-1.5 px-3">
-          {activeTab ? getTabIcon(activeTab, faviconByOrigin) : null}
+          {/* A GitLab project's change requests are merge requests. */}
+          {activeTab?.mode === 'pr' && repositoryProvider === 'gitlab'
+            ? <Icon name="gitlab" className="h-3.5 w-3.5" />
+            : activeTab ? getTabIcon(activeTab, faviconByOrigin) : null}
           <span className="truncate typography-ui-label text-foreground">
-            {activeTab ? getModeLabel(activeTab.mode, t) : null}
+            {activeTab?.mode === 'pr' && repositoryProvider === 'gitlab'
+              ? t('contextPanel.mode.mr')
+              : activeTab ? getModeLabel(activeTab.mode, tabT) : null}
           </span>
         </div>
       )}

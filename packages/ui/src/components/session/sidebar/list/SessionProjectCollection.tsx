@@ -12,17 +12,19 @@ import {
   getActiveSourceControlStatusKeys,
   getGitHubPrStatusKey,
   getSourceControlStatusKey,
+  useBranchTrackedPulls,
   useGitHubPrStatusStore,
 } from '@/stores/useGitHubPrStatusStore';
 import { repositoryBindingOwner } from '@/lib/source-control/repository-binding';
-import { GITHUB_SOURCE_CONTROL_IDENTITY } from '@/lib/source-control/identity';
 import { runBackgroundNetworkTask } from '@/lib/background-network';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import type { GitHubPullRequestRef, SourceControlReadContext } from '@/lib/api/types';
 import { limitSourceControlDiscoveryCandidates } from '../sourceControlDiscovery';
-import { useOpenPrSummarySync } from '@/hooks/useOpenPrSummarySync';
-import { useLinearIssueStateSync } from '@/hooks/useLinearIssueStateSync';
-import { getLinkedGitHubPullRequests, getLinkedSidebarIssues } from '@/lib/linkedIssues';
+import { subscribeOpenchamberEvents } from '@/lib/openchamberEvents';
+import { getLinkedGitHubPullRequests, getLinkedGitLabThreads, getLinkedSidebarIssues, type GitLabThreadRef } from '@/lib/linkedIssues';
+import { useTrackedItems } from '@/lib/trackedItems/interest';
+import { githubThread, gitlabThread, linearIssue } from '@/lib/trackedItems/fromLinks';
+import type { TrackedItem } from '@/lib/trackedItems/model';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import type { SessionTreeItemProps } from '../sessions/SessionTreeItem';
 import { useArchivedAutoFolders } from '../folders/useArchivedAutoFolders';
@@ -60,7 +62,10 @@ import { isSessionInWork } from '@/lib/sessionWorkMetadata';
 import { buildMultiRunIndex } from '@/lib/multirun/runs';
 import { selectBlockingBadgeSessionScopes } from '../sessions/sessionNodeItemUtils';
 
-const SIDEBAR_MISSING_CHANGE_REQUEST_RETRY_MS = 5 * 60_000;
+// A branch without a live change request is asked again when something could
+// have opened one: an agent turn finishing in its directory (at once), or the
+// user coming back to the window (when its answer is older than this).
+const SIDEBAR_MISSING_CHANGE_REQUEST_RETURN_MS = 60_000;
 
 // A stable empty array: without a chats group the sections hook must not see a
 // new reference on every render.
@@ -337,7 +342,7 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
     createFolder,
     addSessionToFolder,
   });
-  const { sourceControl, linear } = useRuntimeAPIs();
+  const { sourceControl } = useRuntimeAPIs();
   const ensurePrStatusEntry = useGitHubPrStatusStore((state) => state.ensureEntry);
   const setPrStatusParams = useGitHubPrStatusStore((state) => state.setParams);
   const refreshPrStatusTargets = useGitHubPrStatusStore((state) => state.refreshTargets);
@@ -490,6 +495,9 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
     // branch.
     const linkedRefs = new Map<string, GitHubPullRequestRef>();
     const linkedIssueRefs = new Map<string, GitHubPullRequestRef>();
+    // GitLab merge requests and issues linked to the sessions on screen; their
+    // state comes from their instance, on its own cadence below.
+    const gitlabRefs = new Map<string, GitLabThreadRef>();
     // Linear issues linked to the sessions on screen; their state comes from
     // Linear, on its own cadence below.
     const linearIdentifiers = new Set<string>();
@@ -511,13 +519,14 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
             linearIdentifiers.add(issue.identifier.toUpperCase());
           }
         }
+        for (const ref of getLinkedGitLabThreads(node.session)) gitlabRefs.set(ref.key, ref);
       }
       node.children.forEach(addNode);
     };
     workItems.forEach((item) => addNode(item.node));
     if (timelineMode) {
       timelineItems.forEach((item) => addNode(item.node));
-      return { targets, linkedRefs: [...linkedRefs.values()], linkedIssueRefs: [...linkedIssueRefs.values()], linearIdentifiers: [...linearIdentifiers] };
+      return { targets, linkedRefs: [...linkedRefs.values()], linkedIssueRefs: [...linkedIssueRefs.values()], linearIdentifiers: [...linearIdentifiers], gitlabRefs: [...gitlabRefs.values()] };
     }
     recentActivitySections.forEach((section) => section.items.forEach((item) => addNode(item.node)));
     projectSections.forEach((section) => {
@@ -532,7 +541,7 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
         addTarget(directory, group.branch?.trim() || topology.gitBranches.get(directory || ''));
       });
     });
-    return { targets, linkedRefs: [...linkedRefs.values()], linkedIssueRefs: [...linkedIssueRefs.values()], linearIdentifiers: [...linearIdentifiers] };
+    return { targets, linkedRefs: [...linkedRefs.values()], linkedIssueRefs: [...linkedIssueRefs.values()], linearIdentifiers: [...linearIdentifiers], gitlabRefs: [...gitlabRefs.values()] };
   }, [projectSections, projectView.collapsedProjects, recentActivitySections, timelineItems, timelineMode, topology.gitBranches, topology.isVSCode, workItems]);
   const shownPrTargets = shownPrs.targets;
   // The discovery effect below subscribes to bindings and reads them; keep its
@@ -559,7 +568,7 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
 
     let cancelled = false;
     const discoveryRuntimeKey = getRuntimeKey();
-    const discover = async (changedDirectory?: string) => {
+    const discover = async (changedDirectory?: string, retryAfterMs = SIDEBAR_MISSING_CHANGE_REQUEST_RETURN_MS) => {
       const now = Date.now();
       const contextsByDirectory = new Map<string, Promise<SourceControlReadContext[] | null>>();
       const loadContexts = (directory: string): Promise<SourceControlReadContext[] | null> => {
@@ -620,7 +629,7 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
           && !hasLiveChangeRequest
           && (
             !retriedMissingChangeRequestKeysRef.current.has(key)
-            || now - lastCheckedAt >= SIDEBAR_MISSING_CHANGE_REQUEST_RETRY_MS
+            || now - lastCheckedAt >= retryAfterMs
           ),
         );
         if (!entry || !entry.isInitialStatusResolved || shouldRetryMissingChangeRequest) {
@@ -670,12 +679,22 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
       }
     });
     void discover();
-    const discoveryTimer = window.setInterval(() => { void discover(); }, SIDEBAR_MISSING_CHANGE_REQUEST_RETRY_MS);
+    const candidateDirectories = new Set(candidates.map((candidate) => candidate.directory));
+    const releaseActivity = subscribeOpenchamberEvents((event) => {
+      if (!cancelled && event.type === 'source-control-activity' && candidateDirectories.has(event.directory)) {
+        void discover(event.directory, 0);
+      }
+    });
+    const onReturn = () => {
+      if (!cancelled && document.visibilityState === 'visible') void discover();
+    };
+    document.addEventListener('visibilitychange', onReturn);
     return () => {
       cancelled = true;
       releaseAuth();
       releases.forEach((release) => release());
-      window.clearInterval(discoveryTimer);
+      releaseActivity();
+      document.removeEventListener('visibilitychange', onReturn);
       for (const candidate of candidates) {
         releaseActiveSourceControlContexts(discoveryRuntimeKey, candidate.directory, sourceControlContextsOwnerId);
       }
@@ -697,11 +716,17 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
     () => getActiveSourceControlStatusKeys(activeContextRegistrations, shownPrTargets.values()),
     [activeContextRegistrations, shownPrTargets],
   );
-  const githubConnected = useSourceControlAuthStore(
-    (state) => state.entries[getSourceControlAuthKey(GITHUB_SOURCE_CONTROL_IDENTITY)]?.status?.connected === true,
-  );
-  useOpenPrSummarySync(shownPrKeys, shownPrs.linkedRefs, shownPrs.linkedIssueRefs, sourceControl, githubConnected);
-  useLinearIssueStateSync(shownPrs.linearIdentifiers, linear);
+  // The open change requests of the branches on screen, and the linked PRs,
+  // merge requests and issues: the server follows them and pushes changes.
+  const branchPulls = useBranchTrackedPulls(shownPrKeys);
+  const shownTrackedItems = React.useMemo((): TrackedItem[] => [
+    ...branchPulls,
+    ...shownPrs.linkedRefs.map((ref) => githubThread('pull', ref)),
+    ...shownPrs.linkedIssueRefs.map((ref) => githubThread('issue', ref)),
+    ...shownPrs.gitlabRefs.map((ref) => (ref.thread === 'pull' ? gitlabThread('pull', ref) : gitlabThread('issue', ref))),
+    ...shownPrs.linearIdentifiers.map(linearIssue),
+  ], [branchPulls, shownPrs]);
+  useTrackedItems(shownTrackedItems);
 
   const { groupStatusByKey, bootstrapSnapshot } = useSidebarGroupStatus({
     childStores,

@@ -159,19 +159,25 @@ are re-read when selected or on the next `server.connected`. The pending
 permissions and forms OpenCode rejected on the way out and the turns it
 interrupted arrive as their own events.
 
-Every managed chat has its own directory, so each chat opened would keep its
-own set of MCP servers for that hour. `chat-location-release.ts` releases a
-chat directory's location (`DELETE /api/debug/location`, the route the
-worktree removal paths already use) 30 s after the selected directory moves
-away from it. It checks again at that moment and keeps the location while the
-chat is selected again, shown in a side panel, has a busy or retrying session,
-a pending permission or form, or a running background command; a busy chat is
-re-checked every 30 s until it settles or is selected. A directory without a
-store is left to OpenCode's own sweep. Project and worktree directories are never released this
-way. Another client still showing the chat gets `location.shutdown` and
-bootstraps it again, which restarts that chat's MCP servers. A failed release
-is ignored: OpenCode's own sweep still applies. VS Code has no managed chats,
-so nothing there qualifies.
+Every managed chat and every worktree has its own directory, so each one
+opened would keep its own set of MCP servers for that hour.
+`location-release.ts` releases such a directory's location
+(`DELETE /api/debug/location`, the route the worktree removal paths already
+use) after the selected directory moves away from it: 30 s for a chat, 5 min
+for a worktree, which the user comes back to through the day and where a
+return after a release waits for the MCP servers to start again. A worktree is
+a path listed in `availableWorktreesByProject` that is not a project root. It
+checks again at that moment and keeps the location while the directory is
+selected again, shown in a side panel, has a busy or retrying session, a
+pending permission or form, or a running background command; a busy directory
+is re-checked at its own delay until it settles or is selected. A directory
+without a store is left to OpenCode's own sweep. Project roots are never
+released this way: the user returns to them most, and the server's default
+scope reads the last-used one. Another client still showing the directory gets
+`location.shutdown` and bootstraps it again, which restarts its MCP servers. A
+failed release is ignored: OpenCode's own sweep still applies. The rule is the
+same on every surface; VS Code has no managed chats, so only worktrees it
+lists qualify there.
 
 ## Committing a revert
 
@@ -510,7 +516,7 @@ Rules:
    Directory `sessionStatusReady` records successful status-snapshot authority independently of bootstrap's general readiness. Before that flag or an explicit session status arrives, telemetry treats an omitted status as unknown. Archiving invalidates status authority for that session alone: restoring it cannot inherit the directory's older snapshot as proof of idle. A live status event or a successful fresh status read clears the invalidation; a failed read leaves it unknown. Neither the flag nor invalidations are persisted.
 7. Pagination demand must carry the selected session's effective directory. It must not fall back to the sync provider directory because the visible session may belong to another worktree.
 8. The ref-stable loader is disposed only after the current task when its provider unmounts. This lets React Strict Mode's development setup → cleanup → setup probe retain a usable loader for child effects, while real disposal still invalidates the preceding lifecycle's work.
-9. Transcript arrays are chronological by `message.time.created`. Within one millisecond a `synthetic` record sorts before any other role, then message ID breaks the tie deterministically: composer context is admitted right before its prompt, often in the same millisecond, while the prompt's ID is minted earlier on the client. Sends mint context IDs before the prompt ID and show those synthetic records optimistically with the prompt's timestamp, so the context renders on the prompt from the first frame and the server records reconcile in place. Message IDs are identity and reconciliation keys, not chronology: OpenCode's fixed-width sortable timestamp prefix rolls over, so a newer `msg_000...` can follow an older `msg_fff...`. Fetch, pagination, materialization, optimistic insertion, events, reconnect inspection, rendering, and revert/undo/redo must preserve this contract.
+9. Transcript arrays are chronological by `message.time.created`. Within one millisecond a `synthetic` record sorts before any other role, then message ID breaks the tie deterministically: composer context is admitted right before its prompt, often in the same millisecond, while the prompt's ID is minted earlier on the client. Sends mint context IDs before the prompt ID and show those synthetic records optimistically with the prompt's timestamp, so the context renders on the prompt from the first frame and the server records reconcile in place. Optimistic records carry the client's clock, so a page that returns the server's copy of one replaces the client's copy outright, unless a live event already did; otherwise a remote client whose clock runs ahead keeps its prompt sorted after the reply. Message IDs are identity and reconciliation keys, not chronology: OpenCode's fixed-width sortable timestamp prefix rolls over, so a newer `msg_000...` can follow an older `msg_fff...`. Fetch, pagination, materialization, optimistic insertion, events, reconnect inspection, rendering, and revert/undo/redo must preserve this contract.
 10. Session-scoped ArrowUp and ArrowDown recall merges the visible transcript's user prompts (`useUserMessageHistory`) with the persisted input-history bucket for runtime + normalized directory + session identity. Revert markers hide prompts from the transcript source only; the persisted bucket still recalls them. Global scope reads the persisted runtime bucket alone.
 11. Part arrays preserve authoritative response/event order. Part IDs are identity keys and have the same rollover limitation; identity lookup/removal must not require a part array to be lexically ID-sorted.
 

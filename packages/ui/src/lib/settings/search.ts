@@ -279,7 +279,7 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     id: 'chat.reasoning',
     page: 'chat',
     titleKey: 'settings.openchamber.visual.section.reasoning',
-    keywords: ['thinking', 'traces'],
+    keywords: ['thinking', 'traces', 'collapse', 'expand', 'streaming'],
   },
   {
     id: 'chat.streaming',
@@ -329,6 +329,20 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'chat',
     titleKey: 'settings.openchamber.visual.field.codeBlockLineWrap',
     keywords: ['code', 'wrap', 'line wrap', 'markdown'],
+  },
+  {
+    id: 'chat.table-cell-wrap',
+    page: 'chat',
+    titleKey: 'settings.openchamber.visual.field.tableCellWrap',
+    descriptionKey: 'settings.openchamber.visual.field.tableCellWrapInfo',
+    keywords: ['table', 'wrap', 'cell', 'columns', 'markdown'],
+  },
+  {
+    id: 'chat.copy-plain-text',
+    page: 'chat',
+    titleKey: 'settings.openchamber.visual.field.copyMessagesAsPlainText',
+    descriptionKey: 'settings.openchamber.visual.field.copyMessagesAsPlainTextInfo',
+    keywords: ['copy', 'clipboard', 'plain text', 'markdown', 'selection'],
   },
   {
     id: 'chat.inline-assistant-actions',

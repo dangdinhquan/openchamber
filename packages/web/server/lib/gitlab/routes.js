@@ -2,7 +2,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 import { createSourceControlAuthStore } from './auth-storage.js';
-import { defaultGitLabClientId, exchangeGitLabDeviceCode, probeGitLabAuth, startGitLabDeviceFlow } from './device-flow.js';
+import { exchangeGitLabDeviceCode, resolveGitLabClientId, probeGitLabAuth, startGitLabDeviceFlow } from './device-flow.js';
 import { getGlabToken } from './glab-credential.js';
 import { normalizeGitLabInstance } from './instance.js';
 import { classifyGitLabFailure } from './network.js';
@@ -107,13 +107,7 @@ export function registerGitLabRoutes(app, options = {}) {
   const store = options.store ?? createSourceControlAuthStore({ filePath: authFile });
   const oauthFlowRegistry = options.oauthFlowRegistry ?? createOAuthFlowRegistry();
   const readSettings = options.readSettings ?? (async () => ({}));
-  const getClientId = async (origin) => {
-    const envValue = isString(process.env.OPENCHAMBER_GITLAB_CLIENT_ID) ? process.env.OPENCHAMBER_GITLAB_CLIENT_ID.trim() : '';
-    if (envValue) return envValue;
-    const settings = await readSettings();
-    const stored = isString(settings?.gitlabClientId) ? settings.gitlabClientId.trim() : '';
-    return stored || defaultGitLabClientId(origin);
-  };
+  const getClientId = (origin) => resolveGitLabClientId(origin, readSettings);
   const glabToken = (origin) => getGlabToken(origin, { execFile: options.execFile, timeoutMs: options.cliTimeoutMs });
   const verify = (origin, token) => verifyGitLabToken({ origin, token, fetch: fetchImpl, timeoutMs });
   const createClient = options.createClient ?? createGitLabClient;
@@ -134,14 +128,18 @@ export function registerGitLabRoutes(app, options = {}) {
     options.onAccountConnected?.({
       account,
       user,
+      credential: { credentialRevision: credential.credentialRevision, providerUserId: credential.providerUserId },
       renews: superseded.map((candidate) => ({ ...account, accountId: candidate.id })),
     });
   };
   const statusCache = createChangeRequestStatusCache({ ttlMs: STATUS_CACHE_TTL_MS });
-  const invalidateAccount = async (origin, accountId) => {
+  /** Writes an account off after GitLab refused its token, unless renewing it works. Returns whether it was renewed. */
+  const invalidateAccount = async (origin, accountId, { renew = true } = {}) => {
     statusCache.invalidate({ instance: origin, accountId });
+    if (renew && await store.renewAccount?.(origin, accountId)) return true;
     await options.onAccountInvalidated?.(identityFor(origin, accountId));
     await store.markAccountInvalid(origin, accountId, 'unauthorized');
+    return false;
   };
 
   const getUsableGlab = async (origin) => {
@@ -156,7 +154,7 @@ export function registerGitLabRoutes(app, options = {}) {
     }
   };
 
-  const buildStatus = async (origin) => {
+  const buildStatus = async (origin, renewed = false) => {
     const instance = await store.readInstance(origin);
     const activeRecord = instance.cliActive ? null : instance.accounts.find((account) => account.id === instance.activeAccountId) ?? null;
     const active = activeRecord?.status === 'invalid' ? null : activeRecord;
@@ -214,8 +212,9 @@ export function registerGitLabRoutes(app, options = {}) {
     } catch (error) {
       const kind = classifyGitLabFailure(error);
       if (error?.kind === 'invalid-token') {
-        await invalidateAccount(origin, active.id);
-        return buildStatus(origin);
+        // A renewed token gets one more try; refused again, the account is written off.
+        const renewedNow = await invalidateAccount(origin, active.id, { renew: !renewed });
+        return buildStatus(origin, renewedNow);
       }
       return { provider: 'gitlab', instance: origin, status: kind, connected: false, message: error?.message, accounts };
     }
@@ -270,7 +269,10 @@ export function registerGitLabRoutes(app, options = {}) {
     const identity = identityFor(origin, accountId);
     const resourceOptions = {
       origin,
-      client: createClient({ origin, token, tokenType: active?.source === 'oauth' ? 'oauth' : 'token' }),
+      // Only a stored personal access token goes as PRIVATE-TOKEN. OAuth
+      // sign-ins, and the glab login (an OAuth token on gitlab.com, a personal
+      // token elsewhere), go as a bearer token, which GitLab accepts for both.
+      client: createClient({ origin, token, tokenType: active?.source === 'pat' ? 'token' : 'oauth' }),
       canonicalReads,
     };
     if (options.resolveProjects) resourceOptions.resolveProjects = options.resolveProjects;
@@ -544,7 +546,10 @@ export function registerGitLabRoutes(app, options = {}) {
       acquired = false;
       if (result.status !== 'connected') return res.json({ connected: false, status: result.error, error: result.message });
       const user = await verify(origin, result.accessToken);
-      const credential = await store.setAccount(origin, { token: result.accessToken, user, source: 'oauth', scope: result.scope });
+      const credential = await store.setAccount(origin, {
+        token: result.accessToken, user, source: 'oauth', scope: result.scope,
+        refreshToken: result.refreshToken, expiresIn: result.expiresIn,
+      });
       await announceConnectedAccount(origin, credential, user);
       return res.json({ connected: true, user, scope: result.scope });
     } catch (error) {
@@ -920,8 +925,48 @@ export function registerGitLabRoutes(app, options = {}) {
     }
   });
 
+  /**
+   * A read for another module (the comparison view, walkthroughs) with the
+   * account of a context its caller has already validated. GitLab refusing
+   * the token writes the account off the same way a route read does, and the
+   * upstream status travels with the error.
+   */
+  const readWithBoundAccount = async (context, read) => {
+    const service = await getResourceService(context.instance, context.accountId, true);
+    try {
+      return await read(service);
+    } catch (error) {
+      const upstreamStatus = error?.cause?.response?.status ?? error?.response?.status ?? error?.status;
+      if (upstreamStatus === 401 && !error?.sourceControlAccountUnavailable && error?.sourceControlIdentity?.accountId) {
+        const identity = error.sourceControlIdentity;
+        if (error.sourceControlPersistedAccount) await invalidateAccount(identity.instance, identity.accountId);
+        else await options.onAccountInvalidated?.(identity);
+      }
+      if (Number.isInteger(upstreamStatus) && upstreamStatus >= 400 && upstreamStatus < 600) error.statusCode = upstreamStatus;
+      throw error;
+    }
+  };
+  const projectSelector = (sourceRepo) => (sourceRepo ? { owner: sourceRepo.owner, name: sourceRepo.repo } : undefined);
+
   return {
     listInstances: async () => store.listInstances?.() ?? [],
+    /** Live state of known merge requests and issues, read with the instance's current account. */
+    readLiveSummaries: async ({ instance, accountId = null, refs, issueRefs }) => {
+      let service;
+      try {
+        service = await getResourceService(normalizeGitLabInstance(instance), accountId ?? '');
+      } catch (error) {
+        if (error?.sourceControlAccountUnavailable) return { connected: false };
+        throw error;
+      }
+      return { connected: true, ...(await service.liveSummaries({ refs, issueRefs })) };
+    },
+    readChangeRequestPatch: ({ context, number, sourceRepo }) => readWithBoundAccount(context, (service) => service
+      .changeRequestPatch(context.directory, number, { project: projectSelector(sourceRepo), remote: context.primaryRemote })),
+    readChangeRequestFile: ({ context, number, sourceRepo, path: filePath, previousPath, status }) => readWithBoundAccount(context, (service) => service
+      .changeRequestFileContents(context.directory, number, {
+        project: projectSelector(sourceRepo), remote: context.primaryRemote, path: filePath, previousPath, status,
+      })),
     resolveChangeRequestSource: async ({ context, project, number, expectedHeadSha, requestedRemoteName }) => {
       const trusted = await options.validateReadContext(context);
       const service = await getResourceService(trusted.instance, trusted.accountId, true);
