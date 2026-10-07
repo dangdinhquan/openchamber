@@ -10,6 +10,7 @@ import { fileArtifactsI18n } from './file-artifacts.i18n';
 import { usageStatsI18n } from './usage-stats.i18n';
 import { webSearchI18n } from './websearch.i18n';
 import { isolatedSpacesI18n } from './isolated-spaces.i18n';
+import { environmentI18n } from './environment.i18n';
 import { providersI18n } from './providers.i18n';
 import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
@@ -130,6 +131,7 @@ export const dict = {
   ...usageStatsI18n.fr,
   ...webSearchI18n.fr,
   ...isolatedSpacesI18n.fr,
+  ...environmentI18n.fr,
   ...providersI18n.fr,
   ...mcpGridI18n.fr,
   ...pluginsGridI18n.fr,
@@ -2930,6 +2932,7 @@ export const dict = {
   'startup.initRecovery.lastError': 'Dernière erreur',
   'startup.initRecovery.retry': 'Réessayer',
   'startup.initRecovery.retrying': 'Nouvelle tentative…',
+  'startup.overlay.slow': 'Le démarrage prend plus de temps que prévu…',
   'onboarding.desktopRecovery.placeholders.remoteServer': 'le serveur distant',
   'onboarding.desktopRecovery.placeholders.unknownServer': 'inconnu',
   'vscodeLayout.title.chat': 'Chat',
@@ -3756,4 +3759,18 @@ export const dict = {
   'multirun.overview.bar.waiting': 'Exécutions en attente de vous : {count}. L\'exécution ne se termine pas tant que vous n\'avez pas répondu.',
   'multirun.overview.prompt.expand': 'Tout afficher',
   'multirun.overview.prompt.collapse': 'Réduire',
+  'gitView.changes.revertFileDialogTitle': 'Annuler les modifications du fichier ?',
+  'gitView.changes.revertFileDescription': 'Vos modifications locales dans {path} seront perdues.',
+  'gitView.changes.revertFileConfirm': 'Annuler les modifications',
+  'diffView.hunk.discardDialogTitle': 'Abandonner ce bloc ?',
+  'diffView.hunk.discardDescription': 'Ces modifications locales dans {path} seront perdues.',
+  'sessions.sidebar.project.actions.archiveAll': 'Archiver toutes les sessions',
+  'sessions.sidebar.project.archiveAll.title': 'Archiver les sessions de {project} ?',
+  'sessions.sidebar.project.archiveAll.descriptionSingle': '{count} session passe dans les archives. Les sessions épinglées, en cours d’exécution et « En cours » restent.',
+  'sessions.sidebar.project.archiveAll.descriptionPlural': '{count} sessions passent dans les archives. Les sessions épinglées, en cours d’exécution et « En cours » restent.',
+  'sessions.sidebar.project.archiveAll.nothing': 'Rien à archiver : chaque session ici est épinglée, en cours d’exécution ou « En cours ».',
+  'contextPanel.browser.devServers.hide': 'Masquer le port {port} de cette liste',
+  'contextPanel.browser.devServers.showHiddenSingle': 'Afficher {count} port masqué',
+  'contextPanel.browser.devServers.showHiddenPlural': 'Afficher {count} ports masqués',
+  'sidebarFilesTree.menu.openInDefaultApp': 'Ouvrir avec l’app par défaut',
 } as const;

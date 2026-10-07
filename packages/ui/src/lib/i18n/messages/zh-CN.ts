@@ -11,6 +11,7 @@ import { fileArtifactsI18n } from './file-artifacts.i18n';
 import { usageStatsI18n } from './usage-stats.i18n';
 import { webSearchI18n } from './websearch.i18n';
 import { isolatedSpacesI18n } from './isolated-spaces.i18n';
+import { environmentI18n } from './environment.i18n';
 import { providersI18n } from './providers.i18n';
 import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
@@ -131,6 +132,7 @@ export const dict: Record<I18nKey, string> = {
   ...usageStatsI18n['zh-CN'],
   ...webSearchI18n['zh-CN'],
   ...isolatedSpacesI18n['zh-CN'],
+  ...environmentI18n['zh-CN'],
   ...providersI18n['zh-CN'],
   ...mcpGridI18n['zh-CN'],
   ...pluginsGridI18n['zh-CN'],
@@ -3223,6 +3225,7 @@ export const dict: Record<I18nKey, string> = {
   'startup.initRecovery.lastError': '最近的错误',
   'startup.initRecovery.retry': '重试',
   'startup.initRecovery.retrying': '重试中…',
+  'startup.overlay.slow': '启动时间比预期更长…',
   'onboarding.desktopRecovery.placeholders.remoteServer': '远程服务器',
   'onboarding.desktopRecovery.placeholders.unknownServer': '未知服务器',
   'vscodeLayout.title.chat': '聊天',
@@ -3758,4 +3761,18 @@ export const dict: Record<I18nKey, string> = {
   'multirun.overview.bar.waiting': '等待你处理的运行：{count}。你回复之前，这次运行不会结束。',
   'multirun.overview.prompt.expand': '展开全部',
   'multirun.overview.prompt.collapse': '收起',
+  'gitView.changes.revertFileDialogTitle': '还原文件更改？',
+  'gitView.changes.revertFileDescription': '这将丢弃 {path} 中的本地更改。',
+  'gitView.changes.revertFileConfirm': '还原文件',
+  'diffView.hunk.discardDialogTitle': '丢弃此代码块？',
+  'diffView.hunk.discardDescription': '这将丢弃 {path} 中的这些本地更改。',
+  'sessions.sidebar.project.actions.archiveAll': '归档所有会话',
+  'sessions.sidebar.project.archiveAll.title': '归档 {project} 中的会话？',
+  'sessions.sidebar.project.archiveAll.descriptionSingle': '{count} 个会话将被归档。已置顶、正在运行和进行中的会话会保留。',
+  'sessions.sidebar.project.archiveAll.descriptionPlural': '{count} 个会话将被归档。已置顶、正在运行和进行中的会话会保留。',
+  'sessions.sidebar.project.archiveAll.nothing': '没有可归档的会话：这里的每个会话都已置顶、正在运行或进行中。',
+  'contextPanel.browser.devServers.hide': '从此列表中隐藏端口 {port}',
+  'contextPanel.browser.devServers.showHiddenSingle': '显示 {count} 个已隐藏端口',
+  'contextPanel.browser.devServers.showHiddenPlural': '显示 {count} 个已隐藏端口',
+  'sidebarFilesTree.menu.openInDefaultApp': '用默认应用打开',
 };

@@ -7,9 +7,11 @@ import simpleGit from 'simple-git';
 import { createWorktreeBootstrapStore } from './worktree-bootstrap-storage.js';
 import { loadSourceSections, parseSource, sourceKey } from '../walkthrough/sources.js';
 import { registerGitRoutes } from './routes.js';
+import { isUserAction } from '../environment/refresh-scope.js';
 import { normalizeGitOutputPath } from './output-path.js';
 
 import {
+  configureGitEnvironment,
   getCurrentIdentity,
   checkoutBranch,
   checkoutCommit,
@@ -901,6 +903,46 @@ describe('getStatus', () => {
     runGit(repo, ['commit', '-m', 'Initial commit']);
 
     await expect(getStatus(repo)).resolves.toMatchObject({ current: 'main' });
+  });
+
+  it('names the base an upstream-less branch was counted against, and only then', async () => {
+    if (!canRunGit()) return;
+
+    const repo = createTempDir();
+    runGit(repo, ['init', '-b', 'trunk']);
+    runGit(repo, ['config', 'user.email', 'test@example.com']);
+    runGit(repo, ['config', 'user.name', 'Test User']);
+    runGit(repo, ['commit', '--allow-empty', '-m', 'Initial commit']);
+    runGit(repo, ['checkout', '-b', 'feature']);
+
+    // No main/master or origin ref to compare with: ahead 0 proves nothing.
+    await expect(getStatus(repo)).resolves.toMatchObject({ tracking: null, ahead: 0, aheadBase: null });
+
+    runGit(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    await expect(getStatus(repo)).resolves.toMatchObject({ tracking: null, ahead: 0, aheadBase: 'origin/main' });
+
+    runGit(repo, ['commit', '--allow-empty', '-m', 'Unpublished work']);
+    await expect(getStatus(repo)).resolves.toMatchObject({ tracking: null, ahead: 1, aheadBase: 'origin/main' });
+  });
+
+  it('falls back to a local main as the base, but never to the branch itself', async () => {
+    if (!canRunGit()) return;
+
+    const repo = createTempDir();
+    const linked = path.join(createTempDir(), 'linked');
+    runGit(repo, ['init', '-b', 'trunk']);
+    runGit(repo, ['config', 'user.email', 'test@example.com']);
+    runGit(repo, ['config', 'user.name', 'Test User']);
+    runGit(repo, ['commit', '--allow-empty', '-m', 'Initial commit']);
+    runGit(repo, ['branch', 'main']);
+    runGit(repo, ['worktree', 'add', '-q', linked, 'main']);
+    runGit(linked, ['commit', '--allow-empty', '-m', 'Only on main']);
+
+    // No origin: `main` must not be measured against itself.
+    await expect(getStatus(linked)).resolves.toMatchObject({ current: 'main', tracking: null, aheadBase: null });
+
+    runGit(repo, ['checkout', '-q', '-b', 'feature', 'main']);
+    await expect(getStatus(repo)).resolves.toMatchObject({ current: 'feature', tracking: null, ahead: 0, aheadBase: 'main' });
   });
 
   it('rejects a non-git folder without using process.cwd()', async () => {
@@ -5175,6 +5217,57 @@ describe('git environment through simple-git', () => {
       await commit(repo, 'init', { addAll: true });
       expect(readHookLog()).toBe('0|/opt/x');
     });
+  });
+
+  it('gives hooks the directory variables from Settings, except the ones simple-git refuses', async () => {
+    if (!canRunGit() || process.platform === 'win32') return;
+    const forDirectory = vi.fn(async () => ({
+      PROJECT_TOOL: 'from-project',
+      PATH: '/opt/project-tools/bin',
+      EDITOR: 'project-editor',
+      GIT_TERMINAL_PROMPT: '1',
+      GIT_DIR: '/elsewhere/.git',
+    }));
+    configureGitEnvironment({ forDirectory });
+    try {
+      await withProcessEnv({ EDITOR: undefined, GIT_TERMINAL_PROMPT: undefined }, async () => {
+        const { repo, readHookLog } = createRepositoryLoggingHookEnv(['PROJECT_TOOL', 'EDITOR', 'GIT_TERMINAL_PROMPT', 'PATH']);
+        await commit(repo, 'init', { addAll: true });
+        const [projectTool, editor, prompt, hookPath] = readHookLog().split('|');
+        // The commit landed in this repository, not in GIT_DIR's.
+        expect((await getLog(repo, { maxCount: 1 })).all).toHaveLength(1);
+        expect([projectTool, editor, prompt]).toEqual(['from-project', '<unset>', '0']);
+        expect(hookPath.split(':')).toContain('/opt/project-tools/bin');
+        expect(forDirectory).toHaveBeenCalledWith(repo);
+      });
+    } finally {
+      configureGitEnvironment(null);
+    }
+  });
+
+  it('asks for the project environment as a user action on commit, and as a read on status', async () => {
+    if (!canRunGit() || process.platform === 'win32') return;
+    const seen = [];
+    configureGitEnvironment({ forDirectory: async () => { seen.push(isUserAction()); return null; } });
+    try {
+      const { repo } = createRepositoryLoggingHookEnv([]);
+      const routes = { get: new Map(), post: new Map() };
+      registerGitRoutes({
+        get: (url, handler) => routes.get.set(url, handler),
+        post: (url, handler) => routes.post.set(url, handler),
+        put() {}, delete() {},
+      });
+      const response = { status() { return this; }, json() {} };
+      await routes.get.get('/api/git/status')({ query: { directory: repo } }, response);
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.every((flag) => flag === false)).toBe(true);
+      seen.length = 0;
+      await routes.post.get('/api/git/commit')({ query: { directory: repo }, body: { message: 'init', addAll: true } }, response);
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.every((flag) => flag === true)).toBe(true);
+    } finally {
+      configureGitEnvironment(null);
+    }
   });
 
   it('keeps working, and passes them to git, when the process env sets editor, pager, ssh or askpass programs', async () => {

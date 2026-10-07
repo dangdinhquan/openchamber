@@ -23,6 +23,7 @@ import { useProjectsStore } from "@/stores/useProjectsStore";
 import { resolveProjectForSessionDirectory } from "@/lib/projectResolution";
 import { streamDebugEnabled } from "@/stores/utils/streamDebug";
 import { parseModelIdentifier, parseModelSelection } from "@/lib/modelIdentifier";
+import type { ModelRef } from "@/lib/settings/parsers";
 import { configModelIdentifier } from "@/lib/opencode/projection";
 import { runtimeFetch } from "@/lib/runtime-fetch";
 import { EMPTY_VOICE_API_KEYS, fetchVoiceApiKeys, migrateLegacyVoiceApiKeys, updateVoiceApiKeys, type VoiceApiKeyKind, type VoiceApiKeyState } from "@/lib/voiceKeysApi";
@@ -261,6 +262,7 @@ const resolveProviderModelSelection = ({
     settingsDefaultModel,
     settingsDefaultVariant,
     allowFallback,
+    fallbackPrefs,
 }: {
     providers: ProviderWithModelList[];
     currentProviderId?: string;
@@ -270,6 +272,7 @@ const resolveProviderModelSelection = ({
     settingsDefaultModel?: string;
     settingsDefaultVariant?: string;
     allowFallback: boolean;
+    fallbackPrefs: FallbackModelPrefs;
 }): ProviderModelSelection => {
     const resolveVariant = (providerId: string, modelId: string, variant?: string): string | undefined => {
         if (!variant) {
@@ -302,16 +305,67 @@ const resolveProviderModelSelection = ({
     }
 
     if (!allowFallback) return null;
-    if (hasProviderModel(providers, FALLBACK_PROVIDER_ID, FALLBACK_MODEL_ID)) {
+    return resolveLastSelectedModel(fallbackPrefs) ?? resolveFallbackModel(providers, fallbackPrefs.hiddenModels);
+};
+
+/** What the automatic pick reads from the user's model preferences. */
+type FallbackModelPrefs = {
+    hiddenModels: readonly ModelRef[];
+    lastSelectedModel: string | undefined;
+};
+
+const readFallbackModelPrefs = (): FallbackModelPrefs => {
+    const { hiddenModels, lastSelectedModel } = useUIStore.getState();
+    return { hiddenModels, lastSelectedModel };
+};
+
+const isModelHidden = (hiddenModels: readonly ModelRef[], providerId: string, modelId: string): boolean => hiddenModels.some(
+    (hidden) => hidden.providerID === providerId && hidden.modelID === modelId,
+);
+
+// The model last picked in a chat composer, once nothing configured names one.
+// Like a configured default it survives catalog gaps: a provider that has not
+// registered yet must not move a new session onto Big Pickle. A model hidden
+// since, or an Auto pick this server cannot honour, is skipped.
+const resolveLastSelectedModel = (
+    { hiddenModels, lastSelectedModel }: FallbackModelPrefs,
+): { providerId: string; modelId: string } | null => {
+    const parsed = lastSelectedModel ? parseModelString(lastSelectedModel) : null;
+    if (!parsed) return null;
+    if (isModelHidden(hiddenModels, parsed.providerId, parsed.modelId)) return null;
+    if (isStaleAutoSelection(parsed.providerId, parsed.modelId)) return null;
+    return parsed;
+};
+
+// The pick when nothing is configured or remembered: Big Pickle, else the first
+// model. A model the user hid in the picker is skipped; configured defaults never
+// come through here, so they stay honoured even when hidden. With every model
+// hidden the conversation still needs one to send with, so the unfiltered pick stands.
+const resolveFallbackModel = (
+    providers: ProviderWithModelList[],
+    hiddenModels: readonly ModelRef[],
+): { providerId: string; modelId: string } | null => {
+    const isVisible = (providerId: string, modelId: string) => !isModelHidden(hiddenModels, providerId, modelId);
+
+    const hasBigPickle = hasProviderModel(providers, FALLBACK_PROVIDER_ID, FALLBACK_MODEL_ID);
+    if (hasBigPickle && isVisible(FALLBACK_PROVIDER_ID, FALLBACK_MODEL_ID)) {
         return { providerId: FALLBACK_PROVIDER_ID, modelId: FALLBACK_MODEL_ID };
     }
+    for (const provider of providers) {
+        const visibleModel = provider.models.find((model) => isVisible(provider.id, model.modelID));
+        if (visibleModel) {
+            return { providerId: provider.id, modelId: visibleModel.modelID };
+        }
+    }
 
+    if (hasBigPickle) {
+        return { providerId: FALLBACK_PROVIDER_ID, modelId: FALLBACK_MODEL_ID };
+    }
     const firstProvider = providers[0];
     const firstModel = firstProvider?.models[0];
     if (firstProvider && firstModel) {
         return { providerId: firstProvider.id, modelId: firstModel.modelID };
     }
-
     return null;
 };
 
@@ -327,7 +381,7 @@ type DefaultAgentModelSelection = {
 //
 //   Agent: project.defaultAgent → settings.defaultAgent → opencode default_agent → build → first primary → first
 //   Model: project.defaultModel → settings.defaultModel → resolved agent's pinned model+variant → opencode config.model
-//          → opencode/big-pickle → first
+//          → last model picked in a chat → opencode/big-pickle → first (these three skip models hidden in the picker)
 //
 // The opencode default_agent / default model (config fields on the OpenCode server) are honored
 // only when our own settings have no default. A configured identifier remains
@@ -348,6 +402,7 @@ const resolveDefaultAgentModelSelection = ({
     opencodeDefaultAgent,
     opencodeDefaultModel,
     allowFallback = true,
+    fallbackPrefs,
 }: {
     agents: Agent[];
     providers: ProviderWithModelList[];
@@ -360,6 +415,7 @@ const resolveDefaultAgentModelSelection = ({
     opencodeDefaultAgent?: string;
     opencodeDefaultModel?: string;
     allowFallback?: boolean;
+    fallbackPrefs: FallbackModelPrefs;
 }): DefaultAgentModelSelection => {
     const resolveVariant = (providerId: string, modelId: string, variant?: string): string | undefined => {
         if (!variant) {
@@ -436,17 +492,9 @@ const resolveDefaultAgentModelSelection = ({
     }
 
     if (!providerId) {
-        if (hasProviderModel(providers, FALLBACK_PROVIDER_ID, FALLBACK_MODEL_ID)) {
-            providerId = FALLBACK_PROVIDER_ID;
-            modelId = FALLBACK_MODEL_ID;
-        } else {
-            const firstProvider = providers[0];
-            const firstModel = firstProvider?.models[0];
-            if (firstProvider && firstModel) {
-                providerId = firstProvider.id;
-                modelId = firstModel.modelID;
-            }
-        }
+        const fallback = resolveLastSelectedModel(fallbackPrefs) ?? resolveFallbackModel(providers, fallbackPrefs.hiddenModels);
+        providerId = fallback?.providerId;
+        modelId = fallback?.modelId;
     }
 
     return { agentName: resolvedAgent?.name, providerId, modelId, variant };
@@ -996,6 +1044,9 @@ subscribeRuntimeEndpointChanged((detail) => {
     _providersStaleAt.clear();
     _agentsStaleAt.clear();
     _agentsLoadErrors.clear();
+    _inFlightProviders.clear();
+    _inFlightAgents.clear();
+    _agentsLoadGeneration.clear();
     _initializeAppInFlight = null;
     if (detail.runtimeKey === detail.previousRuntimeKey) return;
     useConfigStore.setState({
@@ -1412,7 +1463,19 @@ export type InitFailure = {
 // In-flight dedup: prevent concurrent duplicate loadProviders/loadAgents calls for the same directory
 const _inFlightProviders = new Map<string, Promise<void>>();
 const _inFlightAgents = new Map<string, Promise<boolean>>();
+const _agentsLoadGeneration = new Map<string, number>();
 let _initializeAppInFlight: Promise<void> | null = null;
+
+export const invalidateConfigAgentsLoad = (directory?: string | null): void => {
+    const runtimeContext = captureConfigRuntimeContext();
+    // Same default as loadAgents: no directory means the active one, not global.
+    const directoryKey = toConfigDirectoryKey(directory ?? fromDirectoryKey(useConfigStore.getState().activeDirectoryKey));
+    const inFlightKey = getConfigLoadKey(runtimeContext, directoryKey);
+    _agentsLoadedAt.delete(directoryKey);
+    _agentsLoadGeneration.set(inFlightKey, (_agentsLoadGeneration.get(inFlightKey) ?? 0) + 1);
+    _inFlightAgents.delete(inFlightKey);
+    opencodeClient.invalidateAgentList(fromDirectoryKey(directoryKey));
+};
 
 /**
  * Providers of one project. Returns a stored array, so components can select it
@@ -2078,6 +2141,7 @@ export const useConfigStore = create<ConfigStore>()(
                                     settingsDefaultModel: projectDefaults.projectDefaultModel || state.settingsDefaultModel,
                                     settingsDefaultVariant: projectDefaults.projectDefaultModel ? projectDefaults.projectDefaultVariant : state.settingsDefaultVariant,
                                     allowFallback: state.settingsDefaultsLoaded,
+                                    fallbackPrefs: readFallbackModelPrefs(),
                                 });
                                 const currentSelectedProviderId = state.activeDirectoryKey === directoryKey
                                     ? state.selectedProviderId
@@ -2572,11 +2636,24 @@ export const useConfigStore = create<ConfigStore>()(
                     }
                     if (existing) {
                         markStartupTrace('loadAgents:deduped', { directoryKey, source, requestedDirectory, effectiveDirectory });
-                        return existing;
+                        // Invalidation drops the in-flight entry, so a joined
+                        // read always belongs to the current generation.
+                        const joinedGeneration = _agentsLoadGeneration.get(inFlightKey) ?? 0;
+                        const loaded = await existing;
+                        if (isConfigRuntimeContextCurrent(runtimeContext)
+                            && (_agentsLoadGeneration.get(inFlightKey) ?? 0) !== joinedGeneration) {
+                            return get().loadAgents({ directory: configDirectory, source });
+                        }
+                        return loaded;
                     }
 
+                    const loadGeneration = _agentsLoadGeneration.get(inFlightKey) ?? 0;
+                    const isCurrentAgentLoad = () => (
+                        isConfigRuntimeContextCurrent(runtimeContext)
+                        && (_agentsLoadGeneration.get(inFlightKey) ?? 0) === loadGeneration
+                    );
                     const promise = (async (): Promise<boolean> => {
-                    if (!isConfigRuntimeContextCurrent(runtimeContext)) return false;
+                    if (!isCurrentAgentLoad()) return false;
                     const loadRevision = _catalogRevision;
                     const loaderStarted = typeof performance !== 'undefined' ? performance.now() : Date.now();
                     markStartupTrace('loadAgents:start', { directoryKey, source, requestedDirectory, effectiveDirectory });
@@ -2604,7 +2681,7 @@ export const useConfigStore = create<ConfigStore>()(
                                 get().loadSessionDefaults(),
                             ]);
 
-                            if (!isConfigRuntimeContextCurrent(runtimeContext)) return false;
+                            if (!isCurrentAgentLoad()) return false;
                             if (!defaultsLoaded && !get().settingsDefaultsLoaded) {
                                 throw new Error('Session defaults are not available yet');
                             }
@@ -2631,9 +2708,9 @@ export const useConfigStore = create<ConfigStore>()(
                             });
                             const resolvedZenModel = resolvedGitSelection?.modelId || defaultZenModel;
 
-                            if (!isConfigRuntimeContextCurrent(runtimeContext)) return false;
+                            if (!isCurrentAgentLoad()) return false;
                             set((state) => {
-                                if (!isConfigRuntimeContextCurrent(runtimeContext)) return state;
+                                if (!isCurrentAgentLoad()) return state;
                                 const baseSnapshot: DirectoryScopedConfig = state.directoryScoped[directoryKey] ?? {
                                     providers,
                                     agents: previousAgents,
@@ -2705,9 +2782,9 @@ export const useConfigStore = create<ConfigStore>()(
                                 ) {
                                     get().applyDefaultModelAgentSelection(getProjectDefaultsForConfigDirectory(fromDirectoryKey(directoryKey)));
                                 }
-                                if (!isConfigRuntimeContextCurrent(runtimeContext)) return false;
+                                if (!isCurrentAgentLoad()) return false;
                                 set((state) => {
-                                    if (!isConfigRuntimeContextCurrent(runtimeContext)) return state;
+                                    if (!isCurrentAgentLoad()) return state;
                                     const baseSnapshot: DirectoryScopedConfig = state.directoryScoped[directoryKey] ?? {
                                         providers,
                                         agents: [],
@@ -2759,7 +2836,7 @@ export const useConfigStore = create<ConfigStore>()(
 
                             // Resolve agent + model via the shared cascade:
                             //   project.defaultAgent → settings.defaultAgent → opencode default_agent → build → first primary → first
-                            //   project.defaultModel → settings.defaultModel → resolved agent's model+variant → opencode/big-pickle → first
+                            //   project.defaultModel → settings.defaultModel → resolved agent's model+variant → opencode config.model → last chat pick → opencode/big-pickle → first (skipping hidden models)
                             const resolvedDefault = resolveDefaultAgentModelSelection({
                                 agents: safeAgents,
                                 providers,
@@ -2770,15 +2847,16 @@ export const useConfigStore = create<ConfigStore>()(
                                 opencodeDefaultAgent,
                                 opencodeDefaultModel,
                                 allowFallback: get().settingsDefaultsLoaded,
+                                fallbackPrefs: readFallbackModelPrefs(),
                             });
                             const resolvedAgentName = resolvedDefault.agentName ?? safeAgents[0].name;
                             const resolvedProviderId = resolvedDefault.providerId;
                             const resolvedModelId = resolvedDefault.modelId;
                             const resolvedVariant = resolvedDefault.variant;
 
-                            if (!isConfigRuntimeContextCurrent(runtimeContext)) return false;
+                            if (!isCurrentAgentLoad()) return false;
                             set((state) => {
-                                if (!isConfigRuntimeContextCurrent(runtimeContext)) return state;
+                                if (!isCurrentAgentLoad()) return state;
                                 const baseSnapshot: DirectoryScopedConfig = state.directoryScoped[directoryKey] ?? {
                                     providers,
                                     agents: safeAgents,
@@ -2881,11 +2959,11 @@ export const useConfigStore = create<ConfigStore>()(
                             if (readProjectConfigError(error)) break;
                             const waitMs = 200 * (attempt + 1);
                             await new Promise((resolve) => setTimeout(resolve, waitMs));
-                            if (!isConfigRuntimeContextCurrent(runtimeContext)) return false;
+                            if (!isCurrentAgentLoad()) return false;
                         }
                     }
 
-                    if (!isConfigRuntimeContextCurrent(runtimeContext)) return false;
+                    if (!isCurrentAgentLoad()) return false;
                     console.error("Failed to load agents:", lastError);
                     _agentsLoadErrors.set(directoryKey, lastError instanceof Error ? lastError.message : String(lastError ?? ''));
                     const configError = readProjectConfigError(lastError);
@@ -2900,9 +2978,9 @@ export const useConfigStore = create<ConfigStore>()(
                         error: lastError instanceof Error ? lastError.message : String(lastError),
                     });
 
-                    if (!isConfigRuntimeContextCurrent(runtimeContext)) return false;
+                    if (!isCurrentAgentLoad()) return false;
                     set((state) => {
-                        if (!isConfigRuntimeContextCurrent(runtimeContext)) return state;
+                        if (!isCurrentAgentLoad()) return state;
                         const providers = state.activeDirectoryKey === directoryKey
                             ? state.providers
                             : (state.directoryScoped[directoryKey]?.providers ?? []);
@@ -2939,10 +3017,22 @@ export const useConfigStore = create<ConfigStore>()(
                     });
 
                     return false;
-                    })().finally(() => _inFlightAgents.delete(inFlightKey));
+                    })();
 
                     _inFlightAgents.set(inFlightKey, promise);
-                    return promise;
+                    let loaded: boolean;
+                    try {
+                        loaded = await promise;
+                    } finally {
+                        if (_inFlightAgents.get(inFlightKey) === promise) {
+                            _inFlightAgents.delete(inFlightKey);
+                        }
+                    }
+                    if (isConfigRuntimeContextCurrent(runtimeContext)
+                        && (_agentsLoadGeneration.get(inFlightKey) ?? 0) !== loadGeneration) {
+                        return get().loadAgents({ directory: configDirectory, source });
+                    }
+                    return loaded;
                 },
 
                 invalidateModelMetadataCache: () => {
@@ -3216,7 +3306,7 @@ export const useConfigStore = create<ConfigStore>()(
 
                 // Re-applies the same priority cascade used at app startup (see loadAgents):
                 //   agent: settings.defaultAgent → build → first primary → first agent
-                //   model: project.defaultModel → settings.defaultModel → agent's preferred model → opencode/big-pickle → first
+                //   model: project.defaultModel → settings.defaultModel → agent's preferred model → opencode config.model → last chat pick → opencode/big-pickle → first (skipping hidden models)
                 // Used when entering a fresh draft session so model/agent reset to defaults
                 // instead of sticking to the previously open session's selection.
                 dropStaleAutoSelection: () => {
@@ -3228,6 +3318,7 @@ export const useConfigStore = create<ConfigStore>()(
                         settingsDefaultModel: projectDefaults.projectDefaultModel || current.settingsDefaultModel,
                         settingsDefaultVariant: projectDefaults.projectDefaultModel ? projectDefaults.projectDefaultVariant : current.settingsDefaultVariant,
                         allowFallback: true,
+                        fallbackPrefs: readFallbackModelPrefs(),
                     });
                     if (!resolved) return;
                     set((state) => {
@@ -3297,6 +3388,7 @@ export const useConfigStore = create<ConfigStore>()(
                         opencodeDefaultAgent,
                         opencodeDefaultModel,
                         allowFallback: get().settingsDefaultsLoaded,
+                        fallbackPrefs: readFallbackModelPrefs(),
                     });
 
                     set((state) => {
@@ -3410,6 +3502,7 @@ export const useConfigStore = create<ConfigStore>()(
                             opencodeDefaultAgent,
                             opencodeDefaultModel,
                             allowFallback: state.settingsDefaultsLoaded,
+                            fallbackPrefs: readFallbackModelPrefs(),
                         });
 
                         if (!resolved.agentName) {

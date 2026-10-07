@@ -10,6 +10,7 @@ import { fileArtifactsI18n } from './file-artifacts.i18n';
 import { usageStatsI18n } from './usage-stats.i18n';
 import { webSearchI18n } from './websearch.i18n';
 import { isolatedSpacesI18n } from './isolated-spaces.i18n';
+import { environmentI18n } from './environment.i18n';
 import { providersI18n } from './providers.i18n';
 import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
@@ -70,6 +71,7 @@ export const dict = {
   ...usageStatsI18n.tr,
   ...webSearchI18n.tr,
   ...isolatedSpacesI18n.tr,
+  ...environmentI18n.tr,
   ...providersI18n.tr,
   ...mcpGridI18n.tr,
   ...pluginsGridI18n.tr,
@@ -3078,6 +3080,7 @@ export const dict = {
   'startup.initRecovery.lastError': 'Son hata',
   'startup.initRecovery.retry': 'Yeniden dene',
   'startup.initRecovery.retrying': 'Yeniden deneniyor…',
+  'startup.overlay.slow': 'Başlatma beklenenden uzun sürüyor…',
   'onboarding.desktopRecovery.placeholders.remoteServer': 'uzak sunucu',
   'onboarding.desktopRecovery.placeholders.unknownServer': 'bilinmeyen',
   'vscodeLayout.title.chat': 'Sohbet',
@@ -3755,4 +3758,18 @@ export const dict = {
   'multirun.overview.bar.waiting': 'Sizi bekleyen çalıştırmalar: {count}. Siz yanıtlayana kadar çalıştırma bitmez.',
   'multirun.overview.prompt.expand': 'Tümünü göster',
   'multirun.overview.prompt.collapse': 'Daha az göster',
+  'gitView.changes.revertFileDialogTitle': 'Dosyadaki değişiklikler geri alınsın mı?',
+  'gitView.changes.revertFileDescription': '{path} içindeki yerel değişiklikleriniz silinecek.',
+  'gitView.changes.revertFileConfirm': 'Dosyayı geri al',
+  'diffView.hunk.discardDialogTitle': 'Bu parça silinsin mi?',
+  'diffView.hunk.discardDescription': '{path} içindeki bu yerel değişiklikler silinecek.',
+  'sessions.sidebar.project.actions.archiveAll': 'Tüm oturumları arşivle',
+  'sessions.sidebar.project.archiveAll.title': '{project} içindeki oturumlar arşivlensin mi?',
+  'sessions.sidebar.project.archiveAll.descriptionSingle': '{count} oturum arşive taşınacak. Sabitlenmiş, çalışan ve "Devam eden" oturumları kalır.',
+  'sessions.sidebar.project.archiveAll.descriptionPlural': '{count} oturum arşive taşınacak. Sabitlenmiş, çalışan ve "Devam eden" oturumları kalır.',
+  'sessions.sidebar.project.archiveAll.nothing': 'Arşivlenecek bir şey yok: buradaki her oturum sabitlenmiş, çalışıyor ya da "Devam eden" bölümünde.',
+  'contextPanel.browser.devServers.hide': '{port} bağlantı noktasını bu listede gizle',
+  'contextPanel.browser.devServers.showHiddenSingle': '{count} gizli bağlantı noktasını göster',
+  'contextPanel.browser.devServers.showHiddenPlural': '{count} gizli bağlantı noktasını göster',
+  'sidebarFilesTree.menu.openInDefaultApp': 'Varsayılan uygulamada aç',
 };

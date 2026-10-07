@@ -11,6 +11,7 @@ import { fileArtifactsI18n } from './file-artifacts.i18n';
 import { usageStatsI18n } from './usage-stats.i18n';
 import { webSearchI18n } from './websearch.i18n';
 import { isolatedSpacesI18n } from './isolated-spaces.i18n';
+import { environmentI18n } from './environment.i18n';
 import { providersI18n } from './providers.i18n';
 import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
@@ -141,6 +142,7 @@ export const dict: Record<I18nKey, string> = {
   ...usageStatsI18n.uk,
   ...webSearchI18n.uk,
   ...isolatedSpacesI18n.uk,
+  ...environmentI18n.uk,
   ...providersI18n.uk,
   ...mcpGridI18n.uk,
   ...pluginsGridI18n.uk,
@@ -3211,6 +3213,7 @@ export const dict: Record<I18nKey, string> = {
   "startup.initRecovery.lastError": "Остання помилка",
   "startup.initRecovery.retry": "Повторити спробу",
   "startup.initRecovery.retrying": "Повторна спроба…",
+  "startup.overlay.slow": "Запуск триває довше, ніж очікувалося…",
   "onboarding.desktopRecovery.placeholders.remoteServer": "віддалений сервер",
   "onboarding.desktopRecovery.placeholders.unknownServer": "невідомий",
   "vscodeLayout.title.chat": "Чат",
@@ -3758,4 +3761,18 @@ export const dict: Record<I18nKey, string> = {
   'multirun.overview.bar.waiting': 'Запусків чекають на вас: {count}. Запуск не завершиться, поки ви не відповісте.',
   'multirun.overview.prompt.expand': 'Показати все',
   'multirun.overview.prompt.collapse': 'Згорнути',
+  'gitView.changes.revertFileDialogTitle': 'Скасувати зміни у файлі?',
+  'gitView.changes.revertFileDescription': 'Ваші локальні зміни в {path} буде втрачено.',
+  'gitView.changes.revertFileConfirm': 'Скасувати зміни',
+  'diffView.hunk.discardDialogTitle': 'Відкинути цей фрагмент?',
+  'diffView.hunk.discardDescription': 'Ці локальні зміни в {path} буде втрачено.',
+  'sessions.sidebar.project.actions.archiveAll': 'Архівувати всі сесії',
+  'sessions.sidebar.project.archiveAll.title': 'Архівувати сесії в {project}?',
+  'sessions.sidebar.project.archiveAll.descriptionSingle': '{count} сесію буде архівовано. Закріплені, запущені й ті, що «В роботі», лишаються.',
+  'sessions.sidebar.project.archiveAll.descriptionPlural': 'Буде архівовано сесій: {count}. Закріплені, запущені й ті, що «В роботі», лишаються.',
+  'sessions.sidebar.project.archiveAll.nothing': 'Нічого архівувати: усі сесії тут закріплені, запущені або «В роботі».',
+  'contextPanel.browser.devServers.hide': 'Сховати порт {port} з цього списку',
+  'contextPanel.browser.devServers.showHiddenSingle': 'Показати приховані порти: {count}',
+  'contextPanel.browser.devServers.showHiddenPlural': 'Показати приховані порти: {count}',
+  'sidebarFilesTree.menu.openInDefaultApp': 'Відкрити в програмі за замовчуванням',
 };

@@ -507,14 +507,11 @@ const resolveReadPathFromContext = async ({ req, targetPath, scope, resolveProje
   });
 };
 
-const runCommandInDirectory = ({ shell, shellFlag, command, resolvedCwd, spawn, buildAugmentedPath, commandTimeoutMs }) => {
+const runCommandInDirectory = ({ shell, shellFlag, command, resolvedCwd, spawn, execEnv, commandTimeoutMs }) => {
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
     let timedOut = false;
-
-    const envPath = buildAugmentedPath();
-    const execEnv = { ...process.env, PATH: envPath };
 
     const child = spawn(shell, [shellFlag, command], {
       cwd: resolvedCwd,
@@ -591,6 +588,7 @@ export const registerFsRoutes = (app, dependencies) => {
     openchamberUserConfigRoot,
     managedChatsRoot,
     cloneRepository,
+    environmentRuntime = null,
   } = dependencies;
   // Chat worktrees may live outside every project workspace; both managed
   // roots stay valid filesystem targets.
@@ -706,15 +704,20 @@ export const registerFsRoutes = (app, dependencies) => {
       }
     }
 
-    const runPromise = runCommandInDirectory({
+    const runPromise = (async () => runCommandInDirectory({
       shell,
       shellFlag,
       command,
       resolvedCwd,
       spawn,
-      buildAugmentedPath,
+      // The user's and the project's variables (lib/environment) on top of
+      // the terminal's PATH. Git reads the UI repeats on its own never run
+      // the project's environment command; anything else may.
+      execEnv: environmentRuntime
+        ? await environmentRuntime.applyToDirectory(resolvedCwd, { ...process.env, PATH: buildAugmentedPath() }, { refresh: !isCacheableGitReadCommand(command) })
+        : { ...process.env, PATH: buildAugmentedPath() },
       commandTimeoutMs,
-    }).then((result) => {
+    }))().then((result) => {
       // Only cache successful results — failures may be transient.
       if (cacheKey && result && result.success) {
         setGitReadCacheEntry(cacheKey, result);
@@ -1566,8 +1569,11 @@ export const registerFsRoutes = (app, dependencies) => {
       } else if (platform === 'win32') {
         const stat = await fsPromises.stat(resolved);
         const escapedPath = resolved.replace(/'/g, "''");
-        const explorerArg = stat.isDirectory() ? escapedPath : `/select,${escapedPath}`;
-        const command = `Start-Process -FilePath explorer.exe -ArgumentList '${explorerArg}'`;
+        // A folder opens through its default handler, so a replacement file
+        // manager gets it; only Explorer can select a file inside its folder.
+        const command = stat.isDirectory()
+          ? `Start-Process -FilePath '${escapedPath}'`
+          : `Start-Process -FilePath explorer.exe -ArgumentList '/select,${escapedPath}'`;
         await new Promise((resolve, reject) => {
           const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
             windowsHide: true,

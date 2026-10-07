@@ -55,6 +55,8 @@ type ElectronRuntimeGlobal = {
   runtime?: string;
   arch?: string;
   trayEnabled?: boolean;
+  /** Linux window with the desktop environment's own title bar (opt-in). */
+  nativeFrame?: boolean;
 };
 
 const getElectronRuntime = (): ElectronRuntimeGlobal | null => {
@@ -82,7 +84,8 @@ export const DEFAULT_DESKTOP_WINDOW_CONTROLS_POSITION: DesktopWindowControlsPosi
 export const usesFramelessElectronChrome = (): boolean => {
   if (!isElectronShell()) return false;
   const platform = getElectronPlatform();
-  return platform === 'win32' || platform === 'linux';
+  if (platform === 'linux') return getElectronRuntime()?.nativeFrame !== true;
+  return platform === 'win32';
 };
 
 /** Normalize a stored preference; legacy `auto` maps to the right-side default. */
@@ -236,6 +239,51 @@ export const setDesktopMinimizeToTray = async (enabled: boolean): Promise<Minimi
     return result;
   } catch (error) {
     console.warn('Failed to set minimize to tray status', error);
+    return null;
+  }
+};
+
+type MiniChatGlobalShortcutStatus = {
+  supported: boolean;
+  combo: string | null;
+  active: boolean;
+  // Set when a save was refused; the stored combo is unchanged.
+  error?: 'unsupported-combo';
+};
+
+export const getDesktopMiniChatGlobalShortcut = async (): Promise<MiniChatGlobalShortcutStatus | null> => {
+  if (!canUseElectronDesktopIPC() || !isDesktopLocalOriginActive()) {
+    return null;
+  }
+
+  try {
+    const result = await invokeDesktop<MiniChatGlobalShortcutStatus>('desktop_get_mini_chat_global_shortcut');
+    if (!result || typeof result.supported !== 'boolean' || (result.combo !== null && typeof result.combo !== 'string') || typeof result.active !== 'boolean') {
+      return null;
+    }
+    return result;
+  } catch (error) {
+    console.warn('Failed to get Mini Chat global shortcut status', error);
+    return null;
+  }
+};
+
+export const setDesktopMiniChatGlobalShortcut = async (combo: string | null): Promise<MiniChatGlobalShortcutStatus | null> => {
+  if (!canUseElectronDesktopIPC() || !isDesktopLocalOriginActive()) {
+    return null;
+  }
+
+  try {
+    const result = await invokeDesktop<MiniChatGlobalShortcutStatus>('desktop_set_mini_chat_global_shortcut', { combo });
+    if (!result || typeof result.supported !== 'boolean' || (result.combo !== null && typeof result.combo !== 'string') || typeof result.active !== 'boolean') {
+      return null;
+    }
+    if (result.error !== undefined && result.error !== 'unsupported-combo') {
+      return null;
+    }
+    return result;
+  } catch (error) {
+    console.warn('Failed to set Mini Chat global shortcut', error);
     return null;
   }
 };

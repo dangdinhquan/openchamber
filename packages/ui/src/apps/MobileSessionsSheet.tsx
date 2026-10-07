@@ -60,7 +60,7 @@ import { useWorktreeRemoving } from '@/lib/worktrees/worktreeRemovalState';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useGitAllBranches, useGitStore } from '@/stores/useGitStore';
 import { runBackgroundNetworkTask } from '@/lib/background-network';
-import { mergeLiveSessionWithGlobalSession, refreshGlobalSessions, useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
+import { refreshGlobalSessions, useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useMobileSessionExpansionStore } from '@/stores/useMobileSessionExpansionStore';
 import { useMobileSessionTreeStore } from '@/stores/useMobileSessionTreeStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
@@ -132,6 +132,7 @@ type MobileSessionsSheetProps = {
     onOpenInstances?: () => void;
     onOpenSettings: () => void;
     onOpenScheduled: () => void;
+    onOpenArchive: () => void;
     onOpenUsage: () => void;
     /** Present only while a server update is available (hosted web). */
     onOpenUpdate?: () => void;
@@ -868,7 +869,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
       return;
     }
     void refreshGlobalSessions(liveSessions);
-    // intentionally only on open transition — live overlay handles updates after that
+    // intentionally only on open transition — session events keep the list current after that
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -953,21 +954,22 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   /**
    * Global sessions cover all directories — even unbootstrapped ones — so the tree shows
    * accurate counts even when a worktree's live store hasn't been hydrated yet. Live
-   * sessions overlay for fresher data on the active directory.
+   * sessions only fill gaps, as in the desktop sidebar: the global record hears every
+   * session event itself, and a directory store can keep an old copy of a session it
+   * does not own.
    */
   const sessions = React.useMemo(() => {
-    const liveById = new Map(liveSessions.map((session) => [session.id, session]));
-    const merged = globalActiveSessions.map((session) => {
-      const liveSession = liveById.get(session.id);
-      return liveSession ? mergeLiveSessionWithGlobalSession(liveSession, session) : session;
-    });
+    const merged = [...globalActiveSessions];
     const seenIds = new Set(merged.map((session) => session.id));
     for (const session of liveSessions) {
-      if (!seenIds.has(session.id)) merged.push(session);
+      if (seenIds.has(session.id)) continue;
+      seenIds.add(session.id);
+      merged.push(session);
     }
-    // Archived sessions never show on mobile (no archived view here): the live
-    // overlay can carry them for the active directory, and they'd otherwise
-    // surface in search and then "disappear" once the overlay refreshes.
+    // Archived sessions never show in this list (they have the Archive page,
+    // opened from the footer): a live record can carry one for the active
+    // directory, and it'd otherwise surface in search and then "disappear"
+    // once the lists catch up.
     return merged.filter((session) => !session.time?.archived);
   }, [globalActiveSessions, liveSessions]);
 
@@ -2391,6 +2393,18 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
                 style={{ touchAction: 'manipulation' }}
               >
                 <Icon name="calendar-schedule" className="size-5" />
+              </Button>
+              <Button
+                type="button"
+                variant="default"
+                size="lg"
+                className="w-10 px-0"
+                onClick={footer.onOpenArchive}
+                aria-label={t('sessions.sidebar.nav.archive')}
+                title={t('sessions.sidebar.nav.archive')}
+                style={{ touchAction: 'manipulation' }}
+              >
+                <Icon name="archive" className="size-5" />
               </Button>
               <Button
                 type="button"

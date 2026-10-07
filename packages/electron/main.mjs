@@ -1,5 +1,5 @@
 import { canReuseManagedOpenCodePreflight } from './opencode-readiness.mjs';
-import { app, BrowserWindow, dialog, ipcMain, Menu, MessageChannelMain, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, session, shell, webContents } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, MessageChannelMain, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, session, shell, webContents } from 'electron';
 import contextMenu from 'electron-context-menu';
 import log from 'electron-log/main.js';
 import dgram from 'node:dgram';
@@ -58,6 +58,7 @@ import { probeElectronHostWithDeadline } from './electron-host-probe.mjs';
 import { assertUpdaterCapability } from './updater-capability.mjs';
 import { checkForDesktopUpdate } from './updater-check.mjs';
 import { resolveUpdaterChannel } from './updater-channel.mjs';
+import { convertShortcutComboToAccelerator, MINI_CHAT_GLOBAL_SHORTCUT_SETTING_KEY, normalizeStoredShortcutCombo, selectMiniChatGlobalShortcutAction } from './mini-chat-global-shortcut.mjs';
 import { createContextMenuLabels, menuLabel, normalizeMenuLocale, roleMenuItem } from './menu-locales.mjs';
 import { resolveUpdaterFeed } from './updater-feed.mjs';
 import {
@@ -74,6 +75,7 @@ import {
 import { unsupportedAppSpecificOpenError, validateLocalPath } from './path-open-utils.mjs';
 import {
   browserPanelPermissionAuditDetails,
+  plainChromeUserAgent,
   shouldAllowBrowserPanelCertificateError,
   shouldAllowBrowserPanelPermission,
 } from './browser-panel-security.mjs';
@@ -401,6 +403,14 @@ const prepareForQuit = () => {
   if (state.trayFocusListener) {
     app.removeListener('browser-window-focus', state.trayFocusListener);
     state.trayFocusListener = null;
+  }
+  try {
+    globalShortcut.unregisterAll();
+  } catch {
+  }
+  if (state.miniChatFocusListener) {
+    app.removeListener('browser-window-focus', state.miniChatFocusListener);
+    state.miniChatFocusListener = null;
   }
 
   if (state.mainWindow && !state.mainWindow.isDestroyed()) {
@@ -1033,6 +1043,7 @@ const resolveBrowserPanelContents = (rawId) => {
 
 const hardenBrowserPanelSession = () => {
   const panelSession = session.fromPartition(BROWSER_PANEL_PARTITION);
+  panelSession.setUserAgent(plainChromeUserAgent(panelSession.getUserAgent()));
 
   app.on('certificate-error', (event, contents, url, error, _certificate, callback) => {
     if (contents.session === panelSession && shouldAllowBrowserPanelCertificateError({ url, error })) {
@@ -2084,6 +2095,22 @@ const dispatchDomEventToWindow = (browserWindow, event, detail) => {
   void browserWindow.webContents.executeJavaScript(script, true).catch(() => {});
 };
 
+const closeTabTargets = new WeakSet();
+const closeTabWatched = new WeakSet();
+
+/** Cmd/Ctrl+W: the page's own tab when it has one open, else the window. */
+const closeTabOrWindow = () => {
+  // Only the focused window: with an About panel or nothing of ours in front,
+  // falling back to the main window would close the wrong thing.
+  const target = BrowserWindow.getFocusedWindow();
+  if (!target || target.isDestroyed()) return;
+  if (closeTabTargets.has(target.webContents)) {
+    dispatchDomEventToWindow(target, 'openchamber:close-tab');
+    return;
+  }
+  target.close();
+};
+
 const getMenuTargetWindow = () => {
   const focused = BrowserWindow.getFocusedWindow();
   if (focused && !focused.isDestroyed()) return focused;
@@ -2118,6 +2145,87 @@ const dispatchAddSelectionToChat = () => {
 const dispatchOpenMiniChat = (browserWindow) => {
   const target = browserWindow && !browserWindow.isDestroyed() ? browserWindow : getMenuTargetWindow();
   if (target) emitToWindow(target, 'openchamber:open-mini-chat');
+};
+
+// Mini Chat global shortcut. The combo is stored in settings.json under
+// desktopMiniChatGlobalShortcut using the in-app shortcut syntax. Electron
+// globalShortcut accepts a single accelerator, so the combo must convert; a
+// stored combo that fails to convert (or is taken by another app) stays
+// configured but inactive, and the settings row surfaces that state.
+let registeredMiniChatGlobalShortcutAccelerator = null;
+
+const readDesktopMiniChatGlobalShortcutStatus = () => {
+  const combo = normalizeStoredShortcutCombo(readSettingsRoot()[MINI_CHAT_GLOBAL_SHORTCUT_SETTING_KEY]);
+  return { supported: true, combo, active: registeredMiniChatGlobalShortcutAccelerator !== null };
+};
+
+const ensureMiniChatFocusStampListener = () => {
+  if (state.miniChatFocusListener) return;
+  state.miniChatFocusListener = (_event, browserWindow) => {
+    if (browserWindow && !browserWindow.isDestroyed() && browserWindow.__ocMiniChat === true) {
+      browserWindow.__ocMiniChatFocusedAt = Date.now();
+    }
+  };
+  app.on('browser-window-focus', state.miniChatFocusListener);
+};
+
+const handleMiniChatGlobalShortcut = () => {
+  const action = selectMiniChatGlobalShortcutAction(
+    BrowserWindow.getAllWindows().map((browserWindow) => ({
+      id: browserWindow.id,
+      isMiniChat: browserWindow.__ocMiniChat === true,
+      isFocused: browserWindow.isFocused(),
+      focusedAt: browserWindow.__ocMiniChatFocusedAt ?? 0,
+    })),
+    { hasRendererWindow: getMenuTargetWindow() !== null },
+  );
+  if (action.type === 'hide' || action.type === 'focus') {
+    const target = BrowserWindow.fromId(action.windowId);
+    if (!target || target.isDestroyed()) return;
+    if (action.type === 'hide') {
+      target.hide();
+    } else {
+      if (!target.isVisible()) target.show();
+      target.focus();
+    }
+    return;
+  }
+  if (action.type === 'reveal-main') {
+    // No renderer window is alive (windowless tray mode): the renderer owns
+    // draft-mini-chat creation, so surface the main window and let the next
+    // press open one.
+    void revealMainWindow();
+    return;
+  }
+  dispatchOpenMiniChat();
+};
+
+const applyDesktopMiniChatGlobalShortcut = () => {
+  if (registeredMiniChatGlobalShortcutAccelerator !== null) {
+    try {
+      globalShortcut.unregister(registeredMiniChatGlobalShortcutAccelerator);
+    } catch {
+    }
+    registeredMiniChatGlobalShortcutAccelerator = null;
+  }
+  const { combo } = readDesktopMiniChatGlobalShortcutStatus();
+  if (!combo) return;
+  const accelerator = convertShortcutComboToAccelerator(combo);
+  if (!accelerator) {
+    log.warn('[electron] mini chat global shortcut: unsupported combo', { combo });
+    return;
+  }
+  try {
+    globalShortcut.register(accelerator, handleMiniChatGlobalShortcut);
+    if (globalShortcut.isRegistered(accelerator)) {
+      registeredMiniChatGlobalShortcutAccelerator = accelerator;
+      ensureMiniChatFocusStampListener();
+    } else {
+      log.warn('[electron] mini chat global shortcut: combo is taken by another app', { combo, accelerator });
+    }
+  } catch (error) {
+    log.warn('[electron] mini chat global shortcut: registration failed', error);
+  }
 };
 
 const dispatchCheckForUpdates = () => {
@@ -2730,9 +2838,9 @@ const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', proj
     icon: getWindowIconPath(),
     show: false,
     backgroundColor: resolveSplashBackgroundColor(),
-    frame: usesFramelessChrome ? false : undefined,
+    frame: usesFramelessChrome() ? false : undefined,
     autoHideMenuBar: process.platform !== 'darwin',
-    titleBarStyle: process.platform === 'darwin' || usesFramelessChrome ? 'hidden' : 'default',
+    titleBarStyle: process.platform === 'darwin' || usesFramelessChrome() ? 'hidden' : 'default',
     trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 17 } : undefined,
     webPreferences: {
       additionalArguments: buildRendererAdditionalArguments({
@@ -3572,9 +3680,6 @@ const buildWindowsOpenProjectSpecs = ({ projectPath, appId, appName }) => {
 };
 
 const buildWindowsOpenFileSpecs = ({ filePath, appId, appName }) => {
-  if (appId === 'finder') {
-    return [{ program: 'explorer.exe', args: ['/select,', filePath] }];
-  }
   if (appId === 'terminal') {
     return buildWindowsOpenProjectSpecs({ projectPath: path.dirname(filePath), appId, appName });
   }
@@ -3752,6 +3857,27 @@ const closeAllDevTunnels = () => {
 
 const handleInvoke = async (browserWindow, command, args = {}) => {
   switch (command) {
+    // The page says whether Cmd/Ctrl+W has a tab of its own to close (a file
+    // open in Files). The menu decides in this process, so a page that never
+    // reports one, older or remote, keeps closing the window as before.
+    case 'desktop_set_close_tab_target': {
+      const contents = browserWindow && !browserWindow.isDestroyed() ? browserWindow.webContents : null;
+      if (!contents) return null;
+      if (args?.active === true) {
+        closeTabTargets.add(contents);
+        // A reload or navigation drops the page that registered; until the
+        // new page reports again, the shortcut closes the window.
+        if (!closeTabWatched.has(contents)) {
+          closeTabWatched.add(contents);
+          const forget = () => closeTabTargets.delete(contents);
+          contents.on('did-navigate', forget);
+          contents.on('render-process-gone', forget);
+        }
+      } else {
+        closeTabTargets.delete(contents);
+      }
+      return null;
+    }
     case 'desktop_pick_theme_file': {
       const { pickThemeFile } = await import('./theme-file-picker.mjs');
       return pickThemeFile({ showDialog: (options) => dialog.showOpenDialog(browserWindow || undefined, options) });
@@ -3850,6 +3976,25 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       });
       const active = setDesktopKeepAwakeActive(enabled);
       return { supported: true, enabled, active };
+    }
+
+    case 'desktop_get_mini_chat_global_shortcut': {
+      return readDesktopMiniChatGlobalShortcutStatus();
+    }
+
+    case 'desktop_set_mini_chat_global_shortcut': {
+      const combo = normalizeStoredShortcutCombo(args.combo);
+      // A combo the OS cannot grab leaves the stored setting untouched and
+      // says why, so the settings row can explain instead of failing generically.
+      if (combo !== null && convertShortcutComboToAccelerator(combo) === null) {
+        return { ...readDesktopMiniChatGlobalShortcutStatus(), error: 'unsupported-combo' };
+      }
+      await mutateSettingsRoot((root) => {
+        if (combo === null) delete root[MINI_CHAT_GLOBAL_SHORTCUT_SETTING_KEY];
+        else root[MINI_CHAT_GLOBAL_SHORTCUT_SETTING_KEY] = combo;
+      });
+      applyDesktopMiniChatGlobalShortcut();
+      return readDesktopMiniChatGlobalShortcutStatus();
     }
 
     // Dev-server tunnels: bind a loopback port here and pipe it to a dev server
@@ -4230,6 +4375,11 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       }
       const validated = await validateLocalPath(filePath, 'File path');
       if (process.platform === 'win32') {
+        // The shell's own reveal, so a replacement file manager handles it too.
+        if (appId === 'finder') {
+          shell.showItemInFolder(validated.path);
+          return null;
+        }
         runSpecChain(buildWindowsOpenFileSpecs({ filePath: validated.path, appId, appName }), appName);
         return null;
       }
@@ -4798,7 +4948,7 @@ const buildMacMenu = (locale = 'en') => {
         { type: 'separator' },
         { label: t('addWorkspace'), click: () => dispatchAction('change-workspace') },
         { type: 'separator' },
-        roleItem('close', 'close'),
+        { label: t('close'), accelerator: 'CmdOrCtrl+W', click: closeTabOrWindow },
       ],
     },
     {
@@ -4844,7 +4994,7 @@ const buildMacMenu = (locale = 'en') => {
         { label: t('zoomOut'), accelerator: 'CmdOrCtrl+-', click: () => dispatchAction('zoom-out') },
         { label: t('resetZoom'), accelerator: 'CmdOrCtrl+0', click: () => dispatchAction('zoom-reset') },
         { type: 'separator' },
-        roleItem('close', 'close'),
+        { label: t('close'), accelerator: 'CmdOrCtrl+W', click: closeTabOrWindow },
       ],
     },
     {
@@ -4964,7 +5114,7 @@ const buildAutoHiddenMenu = (locale = 'en') => {
         { label: t('resetZoom'), accelerator: 'Ctrl+0', click: () => dispatchAction('zoom-reset') },
         roleItem('togglefullscreen', 'toggleFullScreen'),
         { type: 'separator' },
-        roleItem('close', 'close'),
+        { label: t('close'), accelerator: 'CmdOrCtrl+W', click: closeTabOrWindow },
       ],
     },
     {
@@ -5067,6 +5217,7 @@ const COMMANDS_SAFE_FOR_REMOTE = new Set([
   'desktop_new_window_for_host',
   'desktop_set_window_title',
   'desktop_set_window_theme',
+  'desktop_set_close_tab_target',
   'desktop_is_window_fullscreen',
   'desktop_start_window_drag',
   'desktop_minimize_current_window',
@@ -5488,6 +5639,7 @@ app.whenReady().then(async () => {
     Menu.setApplicationMenu(buildAutoHiddenMenu());
   }
   setupTray();
+  applyDesktopMiniChatGlobalShortcut();
 
   if ((process.platform === 'darwin' || process.platform === 'win32') && app.isPackaged) {
     const openAtLogin = loginItemSettings?.openAtLogin === true;

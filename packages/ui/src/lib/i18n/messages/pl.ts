@@ -11,6 +11,7 @@ import { fileArtifactsI18n } from './file-artifacts.i18n';
 import { usageStatsI18n } from './usage-stats.i18n';
 import { webSearchI18n } from './websearch.i18n';
 import { isolatedSpacesI18n } from './isolated-spaces.i18n';
+import { environmentI18n } from './environment.i18n';
 import { providersI18n } from './providers.i18n';
 import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
@@ -131,6 +132,7 @@ export const dict: Record<I18nKey, string> = {
   ...usageStatsI18n.pl,
   ...webSearchI18n.pl,
   ...isolatedSpacesI18n.pl,
+  ...environmentI18n.pl,
   ...providersI18n.pl,
   ...mcpGridI18n.pl,
   ...pluginsGridI18n.pl,
@@ -1273,6 +1275,7 @@ export const dict: Record<I18nKey, string> = {
   'startup.initRecovery.lastError': 'Ostatni błąd',
   'startup.initRecovery.retry': 'Ponów',
   'startup.initRecovery.retrying': 'Ponawianie...',
+  'startup.overlay.slow': 'Uruchamianie trwa dłużej, niż oczekiwano...',
   'onboarding.desktopRecovery.placeholders.remoteServer': 'serwer zdalny',
   'onboarding.desktopRecovery.placeholders.unknownServer': 'nieznany',
   'aboutDialog.actions.copyDiagnostics': 'Kopiuj diagnostykę',
@@ -3762,4 +3765,18 @@ export const dict: Record<I18nKey, string> = {
   'multirun.overview.bar.waiting': 'Uruchomienia czekające na Ciebie: {count}. Uruchomienie nie skończy się, dopóki nie odpowiesz.',
   'multirun.overview.prompt.expand': 'Pokaż wszystko',
   'multirun.overview.prompt.collapse': 'Zwiń',
+  'gitView.changes.revertFileDialogTitle': 'Cofnąć zmiany w pliku?',
+  'gitView.changes.revertFileDescription': 'Lokalne zmiany w {path} zostaną odrzucone.',
+  'gitView.changes.revertFileConfirm': 'Cofnij zmiany',
+  'diffView.hunk.discardDialogTitle': 'Odrzucić ten fragment?',
+  'diffView.hunk.discardDescription': 'Te lokalne zmiany w {path} zostaną odrzucone.',
+  'sessions.sidebar.project.actions.archiveAll': 'Archiwizuj wszystkie sesje',
+  'sessions.sidebar.project.archiveAll.title': 'Zarchiwizować sesje w {project}?',
+  'sessions.sidebar.project.archiveAll.descriptionSingle': '{count} sesja trafi do archiwum. Przypięte, działające i oznaczone „W toku” zostają.',
+  'sessions.sidebar.project.archiveAll.descriptionPlural': 'Do archiwum trafi sesji: {count}. Przypięte, działające i oznaczone „W toku” zostają.',
+  'sessions.sidebar.project.archiveAll.nothing': 'Nic do archiwizacji: każda sesja jest przypięta, działa albo jest „W toku”.',
+  'contextPanel.browser.devServers.hide': 'Ukryj port {port} na tej liście',
+  'contextPanel.browser.devServers.showHiddenSingle': 'Pokaż ukryte porty: {count}',
+  'contextPanel.browser.devServers.showHiddenPlural': 'Pokaż ukryte porty: {count}',
+  'sidebarFilesTree.menu.openInDefaultApp': 'Otwórz w domyślnej aplikacji',
 } as const;

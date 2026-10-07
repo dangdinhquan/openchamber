@@ -555,6 +555,12 @@ refusing programmatic focus outside a gesture, WebKit leaving the layout
 viewport panned after the keyboard hides, overlay chains handing off through a
 frame where nothing is open.
 
+The keyboard pin also runs in the iPad Home Screen app (iPad, standalone, not
+Capacitor) at every width, the tablet surface included: standalone Safari does
+not reveal the focused field there. It lifts the composer by the part the
+keyboard covers, so a hardware keyboard or an already revealed field means no
+lift, and a composer too tall to fit above the keyboard stays put.
+
 Typed text and salvage text shown after a failed dictation use the same measured
 line and screen-height limits. Once the viewport reports usable space, content
 scrolls inside the composer so the failed-dictation action row stays inside the
@@ -595,6 +601,57 @@ morph announces `oc:composer-morph` (`hold` with the slot's height delta,
 automatic end write while a transition runs, lets the geometry land in one
 step, and drives scrollTop on the same curve. Mobile browsers, Android and
 reduced motion keep the instant swap.
+
+### WebKit rules for the keyboard choreography
+
+Each of these cost a debugging round on a device:
+
+- **The chat scroller and its content are never transformed.** WebKit rebuilds
+  composited scrolling layers for that, a multi-second stall on long chats.
+  `.chat-scroll` keeps a constant `clientHeight` across keyboard transitions
+  (`mobile.css`): it extends below its shrunken region by
+  `max(--oc-kb-layout - --oc-app-bottom-safe, 0)` and carries
+  `padding-bottom: --oc-kb-scroll-inset`, so opening or closing the keyboard is
+  one `scrollTop` write over rows already mounted.
+- **Movers get inline transforms.** The composer and `.oc-draft-center` slide
+  with transform/transition set inline by the choreography: WebKit does not
+  reliably start a transition when a transform changes through a CSS custom
+  property.
+- **Swap first, then focus in the next frame.** WKWebView stops presenting
+  frames once focus starts the keyboard transition and holds the last one until
+  about mid-transition, so a swap committed in the same task as `focus()` stays
+  invisible. `flushSync` the swap and call `focus()` in the first
+  `requestAnimationFrame`.
+- **The hide intent races React.** `oc:keyboard-intent {open:false}` arrives a
+  few milliseconds after blur; the Capacitor blur branch commits
+  `setFocused(false)` with `flushSync` so the collapse is not skipped.
+- **Hide starts from `focusout`.** `keyboardWillHide` arrives late over the
+  bridge; `isTextInput` counts `isContentEditable`, so CodeMirror qualifies.
+- **The caret is held while things move.** The native caret ignores transforms
+  and jumps after the motion; `.oc-kb-caret-hold` hides it until about 250 ms
+  after settle, and targets `.cm-cursor` / `.cm-dropCursor` too, because
+  CodeMirror draws its own.
+- **Rows around the composer key off `oc-composer-expanded`**, set in the same
+  frame as the pill swap. `oc-keyboard-open` lands with the bridge event about
+  100 ms later and makes a second visible jump.
+- **A composited child inside a sliding ancestor blinks.** Position it without
+  compositing (`SortableTabsStrip`'s `nonCompositedIndicator`).
+- **Programmatic `scrollTop` is ignored during momentum.** iOS overwrites JS
+  writes while a fling runs; `setScrollTopDefeatingMomentum`
+  (`hooks/useChatTimelineController.ts`) toggles `overflow: hidden` to kill the
+  fling, writes, then re-asserts for about 20 frames until the next touch. Use
+  it for any programmatic scroll whose writes do not stick on a device.
+
+Mobile browsers have no choreography: Safari pans instead of resizing. The
+fullscreen and draft composers are `position: fixed` and pinned to the visual
+viewport, so no ancestor root may carry a `transform`, and the header is hidden
+through `oc-browser-kb-fullscreen` instead of out-stacking it. The keyboard
+opens only for a `focus()` inside the tap's own call stack.
+
+When swap and keyboard timing looks wrong, record before guessing: an
+on-screen event timeline (removed in `debug(ui): remove the mobile swap
+timeline overlay`, restorable from git) settled in one screenshot what two
+rounds of plausible fixes could not.
 
 ## Run in parallel
 

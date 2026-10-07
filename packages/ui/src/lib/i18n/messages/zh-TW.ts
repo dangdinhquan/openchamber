@@ -11,6 +11,7 @@ import { fileArtifactsI18n } from './file-artifacts.i18n';
 import { usageStatsI18n } from './usage-stats.i18n';
 import { webSearchI18n } from './websearch.i18n';
 import { isolatedSpacesI18n } from './isolated-spaces.i18n';
+import { environmentI18n } from './environment.i18n';
 import { providersI18n } from './providers.i18n';
 import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
@@ -131,6 +132,7 @@ export const dict: Record<I18nKey, string> = {
   ...usageStatsI18n['zh-TW'],
   ...webSearchI18n['zh-TW'],
   ...isolatedSpacesI18n['zh-TW'],
+  ...environmentI18n['zh-TW'],
   ...providersI18n['zh-TW'],
   ...mcpGridI18n['zh-TW'],
   ...pluginsGridI18n['zh-TW'],
@@ -3218,6 +3220,7 @@ export const dict: Record<I18nKey, string> = {
   'startup.initRecovery.lastError': '最近的錯誤',
   'startup.initRecovery.retry': '重試',
   'startup.initRecovery.retrying': '重試中…',
+  'startup.overlay.slow': '啟動時間比預期更長…',
   'onboarding.desktopRecovery.placeholders.remoteServer': '遠端伺服器',
   'onboarding.desktopRecovery.placeholders.unknownServer': '未知伺服器',
   'vscodeLayout.title.chat': '聊天',
@@ -3757,4 +3760,18 @@ export const dict: Record<I18nKey, string> = {
   'multirun.overview.bar.waiting': '等待你處理的執行：{count}。你回覆之前，這次執行不會結束。',
   'multirun.overview.prompt.expand': '展開全部',
   'multirun.overview.prompt.collapse': '收合',
+  'gitView.changes.revertFileDialogTitle': '還原檔案變更？',
+  'gitView.changes.revertFileDescription': '這將捨棄 {path} 中的本機變更。',
+  'gitView.changes.revertFileConfirm': '還原檔案',
+  'diffView.hunk.discardDialogTitle': '捨棄此區塊？',
+  'diffView.hunk.discardDescription': '這將捨棄 {path} 中的這些本機變更。',
+  'sessions.sidebar.project.actions.archiveAll': '封存所有工作階段',
+  'sessions.sidebar.project.archiveAll.title': '封存 {project} 中的工作階段？',
+  'sessions.sidebar.project.archiveAll.descriptionSingle': '{count} 個工作階段將被封存。已釘選、執行中與進行中的工作階段會保留。',
+  'sessions.sidebar.project.archiveAll.descriptionPlural': '{count} 個工作階段將被封存。已釘選、執行中與進行中的工作階段會保留。',
+  'sessions.sidebar.project.archiveAll.nothing': '沒有可封存的工作階段：這裡的每個工作階段都已釘選、執行中或進行中。',
+  'contextPanel.browser.devServers.hide': '從此清單隱藏連接埠 {port}',
+  'contextPanel.browser.devServers.showHiddenSingle': '顯示 {count} 個已隱藏連接埠',
+  'contextPanel.browser.devServers.showHiddenPlural': '顯示 {count} 個已隱藏連接埠',
+  'sidebarFilesTree.menu.openInDefaultApp': '以預設應用程式開啟',
 };

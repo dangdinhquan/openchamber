@@ -605,6 +605,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     isAvailable: (ctx) => ctx.isDesktopLocalOrigin && ctx.isMac,
   },
   {
+    id: 'sessions.desktop-linux-native-frame',
+    page: 'general',
+    titleKey: 'settings.openchamber.desktopNetwork.field.linuxNativeFrame',
+    descriptionKey: 'settings.openchamber.desktopNetwork.field.linuxNativeFrameDescription',
+    keywords: ['desktop', 'linux', 'title bar', 'titlebar', 'window', 'frame', 'decorations', 'gnome', 'kde'],
+    isAvailable: (ctx) => ctx.isDesktopLocalOrigin && ctx.isLinux,
+  },
+  {
     id: 'sessions.desktop-minimize-to-tray',
     page: 'general',
     titleKey: 'settings.openchamber.desktopNetwork.field.minimizeToTray',
@@ -618,6 +626,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     titleKey: 'settings.openchamber.desktopNetwork.field.keepAwake',
     descriptionKey: 'settings.openchamber.desktopNetwork.field.keepAwakeDescription',
     keywords: ['desktop', 'sleep', 'awake', 'server', 'mobile', 'phone'],
+    isAvailable: (ctx) => ctx.isDesktopLocalOrigin,
+  },
+  {
+    id: 'sessions.desktop-mini-chat-global-shortcut',
+    page: 'general',
+    titleKey: 'settings.openchamber.desktopNetwork.field.miniChatGlobalShortcut',
+    descriptionKey: 'settings.openchamber.desktopNetwork.field.miniChatGlobalShortcutDescription',
+    keywords: ['desktop', 'mini chat', 'shortcut', 'hotkey', 'global', 'keyboard'],
     isAvailable: (ctx) => ctx.isDesktopLocalOrigin,
   },
   {
@@ -648,6 +664,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'general',
     titleKey: 'settings.openchamber.opencodeCli.actions.restart',
     keywords: ['opencode', 'restart', 'reload', 'plugin'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
+    id: 'general.environment-variables',
+    page: 'general',
+    titleKey: 'settings.environment.user.title',
+    descriptionKey: 'settings.environment.user.info',
+    keywords: ['environment', 'env', 'variables', 'api key', 'token', 'secret', 'opencode', 'terminal', 'git'],
     isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
@@ -864,6 +888,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     page: 'projects',
     titleKey: 'settings.projects.shared.replaceMode',
     keywords: ['worktree', 'setup commands', 'shared', 'team', 'only mine'],
+  },
+  {
+    id: 'projects.environment',
+    page: 'projects',
+    titleKey: 'settings.projects.environment.title',
+    descriptionKey: 'settings.projects.environment.info',
+    keywords: ['environment', 'env', 'variables', 'direnv', 'devenv', 'nix', 'envrc', 'path', 'terminal', 'git hooks'],
+    isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
     id: 'projects.shared',

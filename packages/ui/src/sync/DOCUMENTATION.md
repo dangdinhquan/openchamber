@@ -113,6 +113,8 @@ client's config cache, otherwise the refresh would be answered from the copy
 cached seconds earlier. A re-read that returns an identical list keeps the
 objects already in the stores, so nothing re-renders.
 
+Catalog events retain the locations that raised them while the burst settles. Global events and directory-store callbacks schedule the same refresh, including when the event's location already has an open child store. The Settings agent store refreshes those locations together with the ambient project. The batch belongs to the runtime and SDK that received it, and obsolete batches and responses cannot publish after a switch or reconnect.
+
 **The model list.** OpenCode 2.0.8 removed the `catalog.updated` storm and
 replaced it with `provider.updated` and `model.updated`, which it publishes
 only when the list they name actually changed; `events.ts` translates them into
@@ -142,8 +144,11 @@ OpenCode writes it (the event names only the session, so the reducer finds the
 newest running compaction itself); `session.compaction.ended` / `failed`
 settle it. The settled event carries no input id, so the reducer keeps the
 running record's id and creation time instead of adding a second record, the
-way OpenCode's own message store does. The timeline notice shows the summary
-as it grows and collapses it behind a toggle once settled.
+way OpenCode's own message store does. A delta replaces the session's message
+array, so it clones the `message` slice like `message.updated` does. The
+timeline notice shows the summary as it grows (open while it streams only when
+"Expand reasoning while it streams" is on) and collapses it behind a toggle
+once settled.
 
 ## A location's services going away
 
@@ -309,7 +314,7 @@ Session materialization recency is keyed by runtime and directory. Foreground lo
 
 Selection changes and directory message/status/blocking-request publications schedule one coalesced retention pass per directory, and one timer per directory wakes the pass when the earliest idle grace expires. Part-only streaming updates do not schedule retention. Switching runtimes and disposing directories cancel the old cleanup ownership. Eviction resets the loader entry and marks it evicted: messages that later arrive by event for that session are renderable but are not history coverage, so the next navigation fetches the transcript again and merges it with those events instead of presenting them as the whole history.
 
-Cold navigation and prefetch request 100 records (50 on constrained surfaces) and, when that page holds fewer than ten user prompts, extend it backward through the server cursor one page at a time until ten prompts are present, history is complete, or the window holds 300 records (200 constrained); nothing already downloaded is requested again, and the window publishes once. History readers such as export need only one prompt boundary. Interactive history loading requests 100 older records per action; if the batch does not start on a user prompt it reads up to two more whole pages, keeps every fetched record, and stops. The server cursor stays authoritative, the batch publishes once, and a failed follow-up read preserves the previous history and cursor. Overlapping demands share that batch. Programmatic prepend compensation and the settling guard cannot trigger another batch. On desktop an underfilled pinned viewport requests one batch per opened session; the load-older button remains available on every runtime while coverage is incomplete. Explicit complete-history readers use 100-record pages until complete without turn alignment. Exports and title-context reads hold a loader history lease until their result has been copied out.
+Cold navigation and prefetch request 100 records (50 on constrained surfaces) and, when that page holds fewer than ten user prompts, extend it backward through the server cursor one page at a time until ten prompts are present, history is complete, or the window holds 300 records (200 constrained). The record ceiling never stops the window before the newest user prompt: the timeline groups records into turns by their prompt, so a window holding none renders an empty chat, and a last turn longer than the ceiling is read back to its prompt. Nothing already downloaded is requested again, and the window publishes once. History readers such as export need only one prompt boundary. Interactive history loading requests 100 older records per action; if the batch does not start on a user prompt it reads up to two more whole pages, keeps every fetched record, and stops, unless the batch still holds no user prompt at all, in which case it keeps reading until one arrives so the action always adds a visible turn. The server cursor stays authoritative, the batch publishes once, and a failed follow-up read preserves the previous history and cursor. Overlapping demands share that batch. Programmatic prepend compensation and the settling guard cannot trigger another batch. On desktop an underfilled pinned viewport requests one batch per opened session; the load-older button remains available on every runtime while coverage is incomplete. Explicit complete-history readers use 100-record pages until complete without turn alignment. Exports and title-context reads hold a loader history lease until their result has been copied out.
 
 ### Global session list
 
@@ -426,6 +431,8 @@ Current consumers:
 - `Header.tsx`
 - agent/session activity surfaces using `useGlobalSessionStatus()` / `useAllSessionStatuses()`
 
+A cross-project session list (a picker or panel listing every project's sessions) merges two sources, as `MobileSessionsSheet.tsx` does: `useGlobalSessionsStore().activeSessions`, replaced by the live copy from `useAllLiveSessions()` where one exists, plus live sessions the global list does not hold yet. `useSessions()` is scoped to one directory and the global list alone does not cover every initialized directory. Call `refreshGlobalSessions()` or `ensureGlobalSessionsLoaded()` on open for projects not bootstrapped, and map a session to a project by prefix-matching its directory against the project root and its worktree paths (`pathBelongsToRoot`), not by an exact directory lookup.
+
 Cross-directory selectors subscribe to the narrow child-store field they aggregate. Session aggregation listens to `state.session`. Live busy/retry state is also maintained in `global-session-status.ts`, where each row subscribes to one session ID instead of scanning every child store. Events update the index incrementally; authoritative per-directory status snapshots seed it, clear sessions omitted as idle, and reconcile missed events. Unrelated streaming events such as `message.part.delta` must not trigger global session/status scans.
 
 Directories that are not bootstrapped get their initial activity from the host instead: `host-session-status-seed.ts` fetches `/api/sessions/status`, the cross-project map the OpenChamber host keeps from its single upstream event stream, after each global session load. One request, no OpenCode instance creation. The seed is additive only. It adds busy entries (retry collapses to busy; the next live event restores details) for sessions the client has not observed itself, resolves each session's directory from the global session cache, skips entries the host last updated more than 30 minutes ago because nothing reconciles the host map after a stream gap, and never clears anything: the host payload carries no directory, so absence proves nothing. A live event that arrived first wins. In VS Code the webview shim answers the same route from the extension host's activity watcher, whose phases collapse busy and retry and settle themselves, so every entry it reports is current. The remaining gap is intentional and runtime-specific: on desktop with an external OpenCode, a turn that started before the OpenChamber host and has not emitted a status event since shows no dot until its next step.
@@ -502,6 +509,18 @@ The event pipeline's reconnect callback carries `replayReset`. A global WS
 covers the client cursor. The pipeline clears that cursor and the sync provider
 runs normal authoritative gap repair even during early boot. Ordinary reconnects
 retain their existing startup grace period.
+
+While `useAuthSessionStore` says the OpenChamber session is not usable
+(confirmed expiry, or a login in progress), the event pipeline and the
+OpenChamber control stream do not reconnect: every attempt would be refused
+with 401 (#3778). A stream that is still connected keeps running. The store
+returns to `ok` when a login succeeds, a confirm probe finds the session alive,
+or the session gate's status check answers 200, including the check behind the
+banner's "Log in" after the user already logged in from another tab. Then both
+streams reconnect at once, cutting short any backoff wait, and the normal
+reconnect callback repairs the gap. VS Code never reports an
+expired session, and native mobile clears it on the spot, so the pause applies
+where the session gate's banner and login exist.
 
 `SessionMessageLoader` is the shared authority for session message requests. Navigation, reactive chat loading, sidebar prefetch, pagination, reconnect/recovery, and optimistic reconciliation must delegate to it rather than issuing parallel initial requests.
 
@@ -605,6 +624,7 @@ Rules:
 3. Never persist or rank a guessed directory. `selectSession` may fall back to the active directory to keep routing usable, but that value is not written to runtime memory, not written to the last-active snapshot, and not passed as `selected` — a persisted guess outlives the race that produced it and survives reloads and restarts.
 4. Components must not read `currentSessionDirectory` to build request or queue keys; use `getDirectoryForSession()` so every consumer resolves identically. `session-actions.ts` resolves the directory for rename, share, archive and delete the same way: the global record's own directory first, directory-store containment only as a fallback. A project root's store indexes status, permissions and questions for its worktrees' sessions, so containment there named the root for a worktree session and the server rejected the mutation with 404/500.
 5. A disagreement between sources is logged once per session, and `__opencodeDebug.diagnoseSessionDirectory()` reports every source in precedence order.
+6. Opening a session by id (`?session=` routes, deep links, in-chat session links) can select it twice: first with a guessed directory, then with the real one after `ensureGlobalSessionsLoaded`. The directory is part of the chat's session key, so the timeline remounts, and the first timeline may already have shown the target. Work tied to the entry must survive the second entry: a message-link request (`lib/router/messageFocus.ts`) ends on a user gesture, on entering another session, on a missing message, or after 60 s, never because the message was shown once.
 
 ## AI session titles
 

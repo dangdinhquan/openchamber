@@ -53,12 +53,13 @@ import { useRepositoryBinding } from '@/lib/source-control/repository-binding';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { getDetectedUpstreamContextKey, loadDetectedUpstreamRepo } from './detectedUpstreamRepo';
 import type { SourceControlProvider } from '@/lib/source-control/types';
+import { prVisualStateOf, type PrVisualState } from '@/lib/source-control/prVisualState';
 import {
   hasUnknownMutationOutcomeCode,
   reconcileUnknownMutationOutcome,
 } from './sourceControlMutationOutcome';
+import { readMergeMethod, rememberMergeMethod, type MergeMethod } from './mergeMethodPreference';
 
-type MergeMethod = 'merge' | 'squash' | 'rebase';
 type PrSegment = 'overview' | 'checks' | 'comments';
 type PullRequest = NonNullable<SourceControlStatus['pr']>;
 
@@ -115,29 +116,18 @@ const linkCreatedChangeRequestToCurrentSession = (
   ).catch(() => undefined);
 };
 
-const getPrVisualState = (status: SourceControlStatus | null): 'draft' | 'open' | 'blocked' | 'merged' | 'closed' | null => {
+const getPrVisualState = (status: SourceControlStatus | null): PrVisualState | null => {
   const pr = status?.changeRequest ?? status?.pr;
   if (!pr) {
     return null;
   }
-  if (pr.state === 'merged') {
-    return 'merged';
-  }
-  if (pr.state === 'closed') {
-    return 'closed';
-  }
-  if (pr.draft) {
-    return 'draft';
-  }
-  const checksFailed = (status?.ci?.summary ?? status?.checks)?.state === 'failure';
-  const mergeableState = typeof pr.mergeableState === 'string' ? pr.mergeableState : '';
-  // A `blocked` merge state alone (usually a missing review) keeps the open
-  // colour; orange is for failed checks and conflicts.
-  const notMergeable = pr.mergeable === false || mergeableState === 'dirty';
-  if (checksFailed || notMergeable) {
-    return 'blocked';
-  }
-  return 'open';
+  return prVisualStateOf({
+    state: pr.state,
+    draft: pr.draft,
+    checksState: (status?.ci?.summary ?? status?.checks)?.state,
+    mergeable: pr.mergeable,
+    mergeableState: pr.mergeableState,
+  });
 };
 
 const PR_ACTION_REFRESH_DELAYS_MS = [2_000, 5_000] as const;
@@ -360,7 +350,7 @@ export const PullRequestSection: React.FC<{
     }
     return normalizeBranchRef(baseBranch);
   });
-  const [mergeMethod, setMergeMethod] = React.useState<MergeMethod>('squash');
+  const [mergeMethod, setMergeMethod] = React.useState<MergeMethod>(readMergeMethod);
 
   const [isGenerating, setIsGenerating] = React.useState(false);
   const [isCreating, setIsCreating] = React.useState(false);
@@ -1707,7 +1697,10 @@ export const PullRequestSection: React.FC<{
                 <>
                   <Select
                     value={mergeMethod}
-                    onValueChange={(value) => setMergeMethod(value as MergeMethod)}
+                    onValueChange={(value) => {
+                      setMergeMethod(value as MergeMethod);
+                      rememberMergeMethod(value as MergeMethod);
+                    }}
                     disabled={isMerging || pr.state !== 'open'}
                   >
                     <SelectTrigger size="sm" className="h-7 w-auto min-w-0">

@@ -11,6 +11,7 @@ import { fileArtifactsI18n } from './file-artifacts.i18n';
 import { usageStatsI18n } from './usage-stats.i18n';
 import { webSearchI18n } from './websearch.i18n';
 import { isolatedSpacesI18n } from './isolated-spaces.i18n';
+import { environmentI18n } from './environment.i18n';
 import { providersI18n } from './providers.i18n';
 import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
@@ -141,6 +142,7 @@ export const dict: Record<I18nKey, string> = {
   ...usageStatsI18n['pt-BR'],
   ...webSearchI18n['pt-BR'],
   ...isolatedSpacesI18n['pt-BR'],
+  ...environmentI18n['pt-BR'],
   ...providersI18n['pt-BR'],
   ...mcpGridI18n['pt-BR'],
   ...pluginsGridI18n['pt-BR'],
@@ -3211,6 +3213,7 @@ export const dict: Record<I18nKey, string> = {
   "startup.initRecovery.lastError": "Último erro",
   "startup.initRecovery.retry": "Tentar novamente",
   "startup.initRecovery.retrying": "Tentando novamente…",
+  "startup.overlay.slow": "A inicialização está demorando mais que o esperado…",
   "onboarding.desktopRecovery.placeholders.remoteServer": "o servidor remoto",
   "onboarding.desktopRecovery.placeholders.unknownServer": "desconhecido",
   "vscodeLayout.title.chat": "Chat",
@@ -3758,4 +3761,18 @@ export const dict: Record<I18nKey, string> = {
   'multirun.overview.bar.waiting': 'Execuções aguardando você: {count}. A execução só termina quando você responder.',
   'multirun.overview.prompt.expand': 'Mostrar tudo',
   'multirun.overview.prompt.collapse': 'Mostrar menos',
+  'gitView.changes.revertFileDialogTitle': 'Reverter as alterações do arquivo?',
+  'gitView.changes.revertFileDescription': 'Isso vai descartar suas alterações locais em {path}.',
+  'gitView.changes.revertFileConfirm': 'Reverter arquivo',
+  'diffView.hunk.discardDialogTitle': 'Descartar este trecho?',
+  'diffView.hunk.discardDescription': 'Isso vai descartar estas alterações locais em {path}.',
+  'sessions.sidebar.project.actions.archiveAll': 'Arquivar todas as sessões',
+  'sessions.sidebar.project.archiveAll.title': 'Arquivar as sessões de {project}?',
+  'sessions.sidebar.project.archiveAll.descriptionSingle': '{count} sessão vai para o arquivo. Sessões fixadas, em execução e "Em andamento" ficam.',
+  'sessions.sidebar.project.archiveAll.descriptionPlural': '{count} sessões vão para o arquivo. Sessões fixadas, em execução e "Em andamento" ficam.',
+  'sessions.sidebar.project.archiveAll.nothing': 'Nada para arquivar: todas as sessões aqui estão fixadas, em execução ou "Em andamento".',
+  'contextPanel.browser.devServers.hide': 'Ocultar a porta {port} desta lista',
+  'contextPanel.browser.devServers.showHiddenSingle': 'Mostrar {count} porta oculta',
+  'contextPanel.browser.devServers.showHiddenPlural': 'Mostrar {count} portas ocultas',
+  'sidebarFilesTree.menu.openInDefaultApp': 'Abrir no app padrão',
 };

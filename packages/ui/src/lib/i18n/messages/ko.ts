@@ -11,6 +11,7 @@ import { fileArtifactsI18n } from './file-artifacts.i18n';
 import { usageStatsI18n } from './usage-stats.i18n';
 import { webSearchI18n } from './websearch.i18n';
 import { isolatedSpacesI18n } from './isolated-spaces.i18n';
+import { environmentI18n } from './environment.i18n';
 import { providersI18n } from './providers.i18n';
 import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
@@ -131,6 +132,7 @@ export const dict: Record<I18nKey, string> = {
   ...usageStatsI18n.ko,
   ...webSearchI18n.ko,
   ...isolatedSpacesI18n.ko,
+  ...environmentI18n.ko,
   ...providersI18n.ko,
   ...mcpGridI18n.ko,
   ...pluginsGridI18n.ko,
@@ -3257,6 +3259,7 @@ export const dict: Record<I18nKey, string> = {
   'startup.initRecovery.lastError': '마지막 오류',
   'startup.initRecovery.retry': '다시 시도',
   'startup.initRecovery.retrying': '다시 시도 중…',
+  'startup.overlay.slow': '시작이 예상보다 오래 걸리고 있습니다…',
   'onboarding.desktopRecovery.placeholders.remoteServer': '원격 서버',
   'onboarding.desktopRecovery.placeholders.unknownServer': '알 수 없음',
   'vscodeLayout.title.chat': '채팅',
@@ -3757,4 +3760,18 @@ export const dict: Record<I18nKey, string> = {
   'multirun.overview.bar.waiting': '사용자를 기다리는 실행: {count}. 응답하기 전에는 실행이 끝나지 않습니다.',
   'multirun.overview.prompt.expand': '모두 보기',
   'multirun.overview.prompt.collapse': '접기',
+  'gitView.changes.revertFileDialogTitle': '파일 변경 사항을 되돌릴까요?',
+  'gitView.changes.revertFileDescription': '{path}의 로컬 변경 사항이 삭제됩니다.',
+  'gitView.changes.revertFileConfirm': '파일 되돌리기',
+  'diffView.hunk.discardDialogTitle': '이 변경 블록을 버릴까요?',
+  'diffView.hunk.discardDescription': '{path}의 이 로컬 변경 사항이 삭제됩니다.',
+  'sessions.sidebar.project.actions.archiveAll': '모든 세션 보관',
+  'sessions.sidebar.project.archiveAll.title': '{project}의 세션을 보관할까요?',
+  'sessions.sidebar.project.archiveAll.descriptionSingle': '세션 {count}개가 보관됩니다. 고정된 세션, 실행 중인 세션, 작업 중인 세션은 남습니다.',
+  'sessions.sidebar.project.archiveAll.descriptionPlural': '세션 {count}개가 보관됩니다. 고정된 세션, 실행 중인 세션, 작업 중인 세션은 남습니다.',
+  'sessions.sidebar.project.archiveAll.nothing': '보관할 세션이 없습니다. 모든 세션이 고정되었거나 실행 중이거나 작업 중입니다.',
+  'contextPanel.browser.devServers.hide': '이 목록에서 포트 {port} 숨기기',
+  'contextPanel.browser.devServers.showHiddenSingle': '숨긴 포트 {count}개 표시',
+  'contextPanel.browser.devServers.showHiddenPlural': '숨긴 포트 {count}개 표시',
+  'sidebarFilesTree.menu.openInDefaultApp': '기본 앱에서 열기',
 };

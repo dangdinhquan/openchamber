@@ -6,24 +6,31 @@ import {
   getDesktopLanAddress,
   getDesktopKeepAwake,
   getDesktopLaunchAtLogin,
+  getDesktopMiniChatGlobalShortcut,
   getDesktopMinimizeToTray,
   isDesktopLocalOriginActive,
   isDesktopShell,
   restartDesktopApp,
   setDesktopKeepAwake,
   setDesktopLaunchAtLogin,
+  setDesktopMiniChatGlobalShortcut,
   setDesktopMinimizeToTray,
 } from '@/lib/desktop';
 import { useI18n } from '@/lib/i18n';
 import { loadDesktopSettings, updateDesktopSettings } from '@/lib/persistence';
 import { getRuntimeApiBaseUrl } from '@/lib/runtime-switch';
+import { formatShortcutForDisplay, getCustomizableShortcutActions, UNASSIGNED_SHORTCUT } from '@/lib/shortcuts';
 import {
   SettingsSection,
   SettingsCheckboxRow,
   SETTINGS_OPTION_STACK_CLASS,
+  SettingsFieldRow,
   SettingsStackedField,
 } from '@/components/sections/shared/SettingsSection';
 import { useEnterprisePolicyStore } from '@/stores/useEnterprisePolicyStore';
+import { useUIStore } from '@/stores/useUIStore';
+
+import { ShortcutRecordingDialog } from './ShortcutRecordingDialog';
 
 export const DesktopNetworkSettings: React.FC = () => {
   const { t } = useI18n();
@@ -31,6 +38,9 @@ export const DesktopNetworkSettings: React.FC = () => {
   const isMacDesktop = isLocalDesktop
     && typeof window !== 'undefined'
     && window.__OPENCHAMBER_PLATFORM__ === 'darwin';
+  const isLinuxDesktop = isLocalDesktop
+    && typeof window !== 'undefined'
+    && window.__OPENCHAMBER_PLATFORM__ === 'linux';
   const [savedValue, setSavedValue] = React.useState(false);
   const [draftValue, setDraftValue] = React.useState(false);
   // The password is write-only: the server says whether one is set, and the
@@ -50,9 +60,22 @@ export const DesktopNetworkSettings: React.FC = () => {
   const [isSavingMinimizeToTray, setIsSavingMinimizeToTray] = React.useState(false);
   const [savedMacMenuBarEnabled, setSavedMacMenuBarEnabled] = React.useState(true);
   const [draftMacMenuBarEnabled, setDraftMacMenuBarEnabled] = React.useState(true);
+  const [savedLinuxNativeFrame, setSavedLinuxNativeFrame] = React.useState(false);
+  const [draftLinuxNativeFrame, setDraftLinuxNativeFrame] = React.useState(false);
   const [keepAwakeSupported, setKeepAwakeSupported] = React.useState(false);
   const [keepAwakeEnabled, setKeepAwakeEnabled] = React.useState(false);
   const [isSavingKeepAwake, setIsSavingKeepAwake] = React.useState(false);
+  const [miniChatGlobalShortcutSupported, setMiniChatGlobalShortcutSupported] = React.useState(false);
+  const [miniChatGlobalShortcutCombo, setMiniChatGlobalShortcutCombo] = React.useState<string | null>(null);
+  const [miniChatGlobalShortcutActive, setMiniChatGlobalShortcutActive] = React.useState(false);
+  const [isSavingMiniChatGlobalShortcut, setIsSavingMiniChatGlobalShortcut] = React.useState(false);
+  const [editingMiniChatGlobalShortcut, setEditingMiniChatGlobalShortcut] = React.useState(false);
+  const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
+  const setShortcutOverride = useUIStore((state) => state.setShortcutOverride);
+  const miniChatGlobalShortcutAction = React.useMemo(
+    () => getCustomizableShortcutActions().find((action) => action.id === 'mini_chat_global') ?? null,
+    [],
+  );
   const [error, setError] = React.useState<string | null>(null);
   const [lanAddress, setLanAddress] = React.useState<string | null>(null);
 
@@ -84,6 +107,9 @@ export const DesktopNetworkSettings: React.FC = () => {
         const macMenuBarEnabled = data.desktopMacMenuBarEnabled !== false;
         setSavedMacMenuBarEnabled(macMenuBarEnabled);
         setDraftMacMenuBarEnabled(macMenuBarEnabled);
+        const linuxNativeFrame = data.desktopLinuxNativeFrame === true;
+        setSavedLinuxNativeFrame(linuxNativeFrame);
+        setDraftLinuxNativeFrame(linuxNativeFrame);
         setError(null);
       } catch (cause) {
         if (!cancelled) {
@@ -165,6 +191,28 @@ export const DesktopNetworkSettings: React.FC = () => {
   }, [isLocalDesktop]);
 
   React.useEffect(() => {
+    if (!isLocalDesktop) {
+      setMiniChatGlobalShortcutSupported(false);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const status = await getDesktopMiniChatGlobalShortcut();
+      if (cancelled) {
+        return;
+      }
+      setMiniChatGlobalShortcutSupported(status?.supported === true);
+      setMiniChatGlobalShortcutCombo(status?.combo ?? null);
+      setMiniChatGlobalShortcutActive(status?.active === true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLocalDesktop]);
+
+  React.useEffect(() => {
     if (!isLocalDesktop || !draftValue) {
       setLanAddress(null);
       return;
@@ -188,7 +236,8 @@ export const DesktopNetworkSettings: React.FC = () => {
   const passwordDirty = nextPassword.length > 0 || removePassword;
   const isDirty = draftValue !== savedValue
     || passwordDirty
-    || draftMacMenuBarEnabled !== savedMacMenuBarEnabled;
+    || draftMacMenuBarEnabled !== savedMacMenuBarEnabled
+    || draftLinuxNativeFrame !== savedLinuxNativeFrame;
   const currentPort = React.useMemo(() => {
     if (typeof window === 'undefined') {
       return null;
@@ -302,6 +351,52 @@ export const DesktopNetworkSettings: React.FC = () => {
     }
   }, [isSavingKeepAwake, keepAwakeEnabled, keepAwakeSupported, t]);
 
+  // Resolves true only when the combo was stored, so callers can tie other
+  // changes to a successful save.
+  const handleMiniChatGlobalShortcutSave = React.useCallback(async (combo: string | null): Promise<boolean> => {
+    if (!miniChatGlobalShortcutSupported || isSavingMiniChatGlobalShortcut) {
+      return false;
+    }
+
+    setIsSavingMiniChatGlobalShortcut(true);
+    setError(null);
+
+    try {
+      const status = await setDesktopMiniChatGlobalShortcut(combo);
+      if (!status?.supported) {
+        throw new Error(t('settings.openchamber.desktopNetwork.error.miniChatGlobalShortcutSaveFailed'));
+      }
+      setMiniChatGlobalShortcutCombo(status.combo ?? null);
+      setMiniChatGlobalShortcutActive(status.active === true);
+      if (status.error === 'unsupported-combo') {
+        setError(t('settings.openchamber.desktopNetwork.error.miniChatGlobalShortcutUnsupported'));
+        return false;
+      }
+      return true;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('settings.openchamber.desktopNetwork.error.miniChatGlobalShortcutSaveFailed'));
+      return false;
+    } finally {
+      setIsSavingMiniChatGlobalShortcut(false);
+    }
+  }, [isSavingMiniChatGlobalShortcut, miniChatGlobalShortcutSupported, t]);
+
+  // Mirrors the in-app shortcut save flow: when the recorded combo collides
+  // with a customizable in-app action, free that binding so the global
+  // shortcut owns the combo (both would otherwise fire simultaneously). The
+  // in-app binding is released only after the global combo was stored.
+  const handleMiniChatGlobalRecorderSave = React.useCallback((
+    _actionId: string,
+    combo: string,
+    replaceActionId?: string,
+  ) => {
+    void handleMiniChatGlobalShortcutSave(combo).then((saved) => {
+      if (!saved || !replaceActionId) return;
+      setShortcutOverride(replaceActionId, UNASSIGNED_SHORTCUT);
+      void updateDesktopSettings({ shortcutOverrides: { ...shortcutOverrides, [replaceActionId]: UNASSIGNED_SHORTCUT } });
+    });
+  }, [handleMiniChatGlobalShortcutSave, setShortcutOverride, shortcutOverrides]);
+
   const handleSaveAndRestart = React.useCallback(async () => {
     if (!isDirty) {
       return;
@@ -316,6 +411,7 @@ export const DesktopNetworkSettings: React.FC = () => {
         // Omitted when unchanged: the server keeps the password it has.
         ...(nextPassword ? { desktopUiPassword: nextPassword } : removePassword ? { desktopUiPassword: '' } : {}),
         desktopMacMenuBarEnabled: draftMacMenuBarEnabled,
+        desktopLinuxNativeFrame: draftLinuxNativeFrame,
       });
 
       if (!result.ok) {
@@ -331,6 +427,7 @@ export const DesktopNetworkSettings: React.FC = () => {
       setDraftPassword('');
       setRemovePassword(false);
       setSavedMacMenuBarEnabled(draftMacMenuBarEnabled);
+      setSavedLinuxNativeFrame(draftLinuxNativeFrame);
 
       const restarted = await restartDesktopApp();
       if (!restarted) {
@@ -340,7 +437,7 @@ export const DesktopNetworkSettings: React.FC = () => {
       setError(cause instanceof Error ? cause.message : t('settings.openchamber.desktopNetwork.error.saveFailed'));
       setIsSaving(false);
     }
-  }, [draftMacMenuBarEnabled, draftValue, isDirty, nextPassword, removePassword, t]);
+  }, [draftLinuxNativeFrame, draftMacMenuBarEnabled, draftValue, isDirty, nextPassword, removePassword, t]);
 
   if (!isLocalDesktop) {
     return null;
@@ -349,7 +446,7 @@ export const DesktopNetworkSettings: React.FC = () => {
   return (
     <SettingsSection title={t('settings.openchamber.desktopNetwork.title')}>
       <div className="space-y-3">
-        {(launchAtLoginSupported || isMacDesktop || minimizeToTraySupported || keepAwakeSupported) ? (
+        {(launchAtLoginSupported || isMacDesktop || isLinuxDesktop || minimizeToTraySupported || keepAwakeSupported || miniChatGlobalShortcutSupported) ? (
           <div className={SETTINGS_OPTION_STACK_CLASS}>
             {launchAtLoginSupported ? (
               <SettingsCheckboxRow
@@ -375,6 +472,18 @@ export const DesktopNetworkSettings: React.FC = () => {
                 label={t('settings.openchamber.desktopNetwork.field.macMenuBar')}
                 info={t('settings.openchamber.desktopNetwork.field.macMenuBarDescription')}
                 ariaLabel={t('settings.openchamber.desktopNetwork.field.macMenuBarAria')}
+              />
+            ) : null}
+
+            {isLinuxDesktop ? (
+              <SettingsCheckboxRow
+                settingsItem="sessions.desktop-linux-native-frame"
+                checked={draftLinuxNativeFrame}
+                onChange={setDraftLinuxNativeFrame}
+                disabled={isLoading || isSaving}
+                label={t('settings.openchamber.desktopNetwork.field.linuxNativeFrame')}
+                info={t('settings.openchamber.desktopNetwork.field.linuxNativeFrameDescription')}
+                ariaLabel={t('settings.openchamber.desktopNetwork.field.linuxNativeFrame')}
               />
             ) : null}
 
@@ -406,6 +515,47 @@ export const DesktopNetworkSettings: React.FC = () => {
                 info={t('settings.openchamber.desktopNetwork.field.keepAwakeDescription')}
                 ariaLabel={t('settings.openchamber.desktopNetwork.field.keepAwakeAria')}
               />
+            ) : null}
+
+            {miniChatGlobalShortcutSupported ? (
+              <SettingsFieldRow
+                settingsItem="sessions.desktop-mini-chat-global-shortcut"
+                label={t('settings.openchamber.desktopNetwork.field.miniChatGlobalShortcut')}
+                info={t('settings.openchamber.desktopNetwork.field.miniChatGlobalShortcutDescription')}
+                description={miniChatGlobalShortcutCombo && !miniChatGlobalShortcutActive ? (
+                  <span className="block text-[var(--status-warning)]">
+                    {t('settings.openchamber.desktopNetwork.field.miniChatGlobalShortcutInactive')}
+                  </span>
+                ) : undefined}
+              >
+                <kbd className="min-w-32 rounded-md border border-border bg-muted px-2 py-1 text-center typography-meta font-mono text-foreground">
+                  {miniChatGlobalShortcutCombo
+                    ? formatShortcutForDisplay(miniChatGlobalShortcutCombo)
+                    : t('settings.openchamber.keyboardShortcuts.unassigned')}
+                </kbd>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="xs"
+                  className="!font-normal"
+                  disabled={isSavingMiniChatGlobalShortcut}
+                  onClick={() => setEditingMiniChatGlobalShortcut(true)}
+                >
+                  {t('settings.openchamber.keyboardShortcuts.actions.edit')}
+                </Button>
+                {miniChatGlobalShortcutCombo ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="!font-normal"
+                    disabled={isSavingMiniChatGlobalShortcut}
+                    onClick={() => void handleMiniChatGlobalShortcutSave(null)}
+                  >
+                    {t('settings.common.actions.reset')}
+                  </Button>
+                ) : null}
+              </SettingsFieldRow>
             ) : null}
           </div>
         ) : null}
@@ -497,6 +647,17 @@ export const DesktopNetworkSettings: React.FC = () => {
           </Button>
         </div>
       </div>
+      <ShortcutRecordingDialog
+        action={editingMiniChatGlobalShortcut ? miniChatGlobalShortcutAction : null}
+        overrides={shortcutOverrides}
+        onSave={handleMiniChatGlobalRecorderSave}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditingMiniChatGlobalShortcut(false);
+          }
+        }}
+        maxChords={1}
+      />
     </SettingsSection>
   );
 };

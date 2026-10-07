@@ -8,7 +8,7 @@ import { useI18n } from '@/lib/i18n';
 import { OpencodeApiError, opencodeClient } from '@/lib/opencode/client';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useGitStore } from '@/stores/useGitStore';
-import { canOfferGitInitialization } from './canOfferGitInitialization';
+import { canOfferGitInitialization } from './gitInitialization';
 
 // OpenCode before 2.0.23 has no `vcs.init` route and answers an untagged 404.
 const isMissingRoute = (error: OpencodeApiError): boolean => error.status === 404 && error.tag === undefined;

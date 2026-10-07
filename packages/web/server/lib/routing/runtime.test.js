@@ -3,7 +3,7 @@ import { createRoutingRuntime, readOpenCodeKeys, requestTextOf } from './runtime
 import { resolveEffectiveConfig } from './store.js';
 import { excerptHead, excerptHeadTail, turnsToHistory } from './history.js';
 import { createJevClient, decidePermission, decideRouting } from './jev.js';
-import { classifierEndpoint, normalizeCustomEndpointUrl, resolveClassifier } from './classifier.js';
+import { classifierEndpoint, parseCustomEndpointUrl, resolveClassifier } from './classifier.js';
 
 const AUTO = { providerID: 'openchamber', id: 'auto' };
 const FALLBACK = { model: { providerID: 'anthropic', modelID: 'claude-sonnet-5' }, variant: 'medium' };
@@ -231,19 +231,19 @@ describe('jev endpoint', () => {
   });
 });
 
-describe('normalizeCustomEndpointUrl', () => {
-  it('takes the full System One URL, an OpenAI-style /v1 base, or an API root', () => {
-    expect(normalizeCustomEndpointUrl(' https://openrouter.ai/api/v1/systemone/ ')).toBe('https://openrouter.ai/api/v1/systemone');
-    expect(normalizeCustomEndpointUrl('https://openrouter.ai/api/v1')).toBe('https://openrouter.ai/api/v1/systemone');
-    expect(normalizeCustomEndpointUrl('https://api.typesafe.ai')).toBe('https://api.typesafe.ai/v1/systemone');
-    expect(normalizeCustomEndpointUrl('http://127.0.0.1:8080/jev/')).toBe('http://127.0.0.1:8080/jev/v1/systemone');
+describe('parseCustomEndpointUrl', () => {
+  it('keeps the pasted URL exactly, appending nothing to its path', () => {
+    expect(parseCustomEndpointUrl(' https://openrouter.ai/api/v1/systemone ')).toBe('https://openrouter.ai/api/v1/systemone');
+    expect(parseCustomEndpointUrl('https://proxy.company.internal/v1/decision')).toBe('https://proxy.company.internal/v1/decision');
+    expect(parseCustomEndpointUrl('https://jev.example.com/v1')).toBe('https://jev.example.com/v1');
+    expect(parseCustomEndpointUrl('http://127.0.0.1:8080/jev/?team=a#frag')).toBe('http://127.0.0.1:8080/jev/?team=a');
   });
 
   it('refuses other schemes, credentials in the URL and non-URLs', () => {
-    expect(() => normalizeCustomEndpointUrl('ftp://example.com')).toThrow(expect.objectContaining({ status: 400 }));
-    expect(() => normalizeCustomEndpointUrl('file:///etc/passwd')).toThrow(expect.objectContaining({ status: 400 }));
-    expect(() => normalizeCustomEndpointUrl('https://user:secret@example.com/v1')).toThrow(expect.objectContaining({ status: 400 }));
-    expect(() => normalizeCustomEndpointUrl('example.com/v1')).toThrow(expect.objectContaining({ status: 400 }));
+    expect(() => parseCustomEndpointUrl('ftp://example.com')).toThrow(expect.objectContaining({ status: 400 }));
+    expect(() => parseCustomEndpointUrl('file:///etc/passwd')).toThrow(expect.objectContaining({ status: 400 }));
+    expect(() => parseCustomEndpointUrl('https://user:secret@example.com/v1')).toThrow(expect.objectContaining({ status: 400 }));
+    expect(() => parseCustomEndpointUrl('example.com/v1')).toThrow(expect.objectContaining({ status: 400 }));
   });
 });
 
@@ -432,10 +432,10 @@ describe('classifier pick', () => {
     expect(store.writeClassifierSource).toHaveBeenCalledWith('typesafe');
   });
 
-  it('saves a custom endpoint with its URL normalized and picks it', async () => {
+  it('saves a custom endpoint with its URL as pasted and picks it', async () => {
     const { runtime, store } = makeRuntime({ answers: {} });
-    await runtime.setCustomEndpoint({ url: 'https://jev.example.com/v1/', model: ' jev-latest ', key: ' own-secret ' });
-    expect(store.writeCustomEndpoint).toHaveBeenCalledWith({ url: 'https://jev.example.com/v1/systemone', model: 'jev-latest', key: 'own-secret' });
+    await runtime.setCustomEndpoint({ url: ' https://jev.example.com/v1/decision ', model: ' jev-latest ', key: ' own-secret ' });
+    expect(store.writeCustomEndpoint).toHaveBeenCalledWith({ url: 'https://jev.example.com/v1/decision', model: 'jev-latest', key: 'own-secret' });
     expect(store.writeClassifierSource).toHaveBeenCalledWith('custom');
   });
 
@@ -532,5 +532,43 @@ describe('describe', () => {
     const none = await makeRuntime({ token: null, answers: {} }).runtime.describe();
     expect(none.customEndpoint).toBeNull();
     expect(none.classification.sources.find((s) => s.id === 'custom')).toEqual({ id: 'custom', usable: false });
+  });
+});
+
+describe('testClassifier', () => {
+  const probe = { choice: 'blue', confidence: 0.98 };
+
+  it('reports the source, model and round trip of the provider answering now', async () => {
+    const { runtime, jev, store } = makeRuntime({ classifierSource: 'typesafe', answers: { probe } });
+    expect(await runtime.testClassifier()).toEqual({ ok: true, source: 'typesafe', model: expect.any(String), ms: 12 });
+    expect(jev.ask.mock.calls[0][1].headers.authorization).toBe('Bearer key');
+    expect(store.writeClassifierSource).not.toHaveBeenCalled();
+  });
+
+  it('names the failure: HTTP status, timeout, unparsable answer, nothing usable', async () => {
+    const http = makeRuntime({ classifierSource: 'typesafe', askError: Object.assign(new Error('Jev responded 401'), { status: 401 }) });
+    expect(await http.runtime.testClassifier()).toMatchObject({ ok: false, reason: 'http', status: 401, source: 'typesafe' });
+    const timeout = makeRuntime({ classifierSource: 'typesafe', askError: Object.assign(new Error('timed out'), { code: 'timeout' }) });
+    expect(await timeout.runtime.testClassifier()).toMatchObject({ ok: false, reason: 'timeout' });
+    const garbled = makeRuntime({ classifierSource: 'typesafe', answers: { probe: { nope: true } } });
+    expect(await garbled.runtime.testClassifier()).toMatchObject({ ok: false, reason: 'unparsable' });
+    const off = makeRuntime({ classifierSource: 'off' });
+    expect(await off.runtime.testClassifier()).toEqual({ ok: false, reason: 'unavailable' });
+  });
+
+  it('tests typed custom endpoint fields without saving them, reusing the saved key when the field is empty', async () => {
+    const { runtime, jev, store } = makeRuntime({
+      customEndpoint: { url: 'https://old.example/v1/decision', model: 'm', key: 'saved' },
+      answers: { probe },
+    });
+    const result = await runtime.testClassifier({ url: 'https://new.example/v1/decision', model: 'jev-x', key: '' });
+    expect(result).toMatchObject({ ok: true, source: 'custom', model: 'jev-x' });
+    expect(jev.ask.mock.calls[0][1]).toMatchObject({ url: 'https://new.example/v1/decision', headers: { authorization: 'Bearer saved' } });
+    expect(store.writeCustomEndpoint).not.toHaveBeenCalled();
+  });
+
+  it('refuses typed endpoints in enterprise mode', async () => {
+    const { runtime } = makeRuntime({ enterprise: true });
+    await expect(runtime.testClassifier({ url: 'https://x.example', model: 'm' })).rejects.toMatchObject({ status: 403 });
   });
 });

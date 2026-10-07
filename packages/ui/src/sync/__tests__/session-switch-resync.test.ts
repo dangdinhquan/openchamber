@@ -68,6 +68,7 @@ mock.module("@/contexts/runtimeAPIRegistry", () => ({
 
 mock.module("@/stores/useConfigStore", () => ({
   markConfigCatalogStale: () => undefined,
+  invalidateConfigAgentsLoad: () => undefined,
   useConfigStore: {
     getState: () => ({ isConnected: true, hasEverConnected: true }),
     setState: () => undefined,
@@ -424,6 +425,32 @@ describe("resyncBlockingRequestsForDirectory", () => {
       expect(changes).toEqual([{ directory: "/repo", paths: ["/repo/src/new.ts"] }, { directory: "/repo" }])
     } finally {
       unsubscribe()
+      childStores.disposeAll()
+    }
+  })
+
+  test("a compaction summary delta publishes a new message slice", () => {
+    const childStores = new ChildStoreManager()
+    const store = childStores.ensureChild("/repo", { bootstrap: false })
+    const routingIndex = createEventRoutingIndex()
+    const send = (event: SyncEvent) => handleEvent("/repo", event, childStores, routingIndex, getRuntimeKey())
+
+    try {
+      send({
+        type: "message.updated",
+        properties: {
+          info: { id: "msg_compact", sessionID: "ses_compact", role: "compaction", time: { created: 1 }, status: "running", reason: "auto", summary: "" },
+        },
+      })
+      const before = store.getState().message
+      send({ type: "message.compaction.delta", properties: { sessionID: "ses_compact", delta: "Summary so far" } })
+      const after = store.getState().message
+
+      // Subscribers only re-render on a new reference; an in-place write is invisible.
+      expect(after).not.toBe(before)
+      expect(before.ses_compact?.[0]).toMatchObject({ summary: "" })
+      expect(after.ses_compact?.[0]).toMatchObject({ summary: "Summary so far" })
+    } finally {
       childStores.disposeAll()
     }
   })

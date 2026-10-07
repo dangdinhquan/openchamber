@@ -10,6 +10,7 @@ import { fileArtifactsI18n } from './file-artifacts.i18n';
 import { usageStatsI18n } from './usage-stats.i18n';
 import { webSearchI18n } from './websearch.i18n';
 import { isolatedSpacesI18n } from './isolated-spaces.i18n';
+import { environmentI18n } from './environment.i18n';
 import { providersI18n } from './providers.i18n';
 import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
@@ -130,6 +131,7 @@ export const dict = {
   ...usageStatsI18n.en,
   ...webSearchI18n.en,
   ...isolatedSpacesI18n.en,
+  ...environmentI18n.en,
   ...providersI18n.en,
   ...mcpGridI18n.en,
   ...pluginsGridI18n.en,
@@ -3257,6 +3259,7 @@ export const dict = {
   'startup.initRecovery.lastError': 'Last error',
   'startup.initRecovery.retry': 'Retry',
   'startup.initRecovery.retrying': 'Retrying…',
+  'startup.overlay.slow': 'Startup is taking longer than expected…',
   'onboarding.desktopRecovery.placeholders.remoteServer': 'the remote server',
   'onboarding.desktopRecovery.placeholders.unknownServer': 'unknown',
   'vscodeLayout.title.chat': 'Chat',
@@ -3757,6 +3760,20 @@ export const dict = {
   'multirun.overview.bar.waiting': 'Runs waiting for you: {count}. The run can\'t finish until you answer them.',
   'multirun.overview.prompt.expand': 'Show all',
   'multirun.overview.prompt.collapse': 'Show less',
+  'gitView.changes.revertFileDialogTitle': 'Revert file changes?',
+  'gitView.changes.revertFileDescription': 'This will discard your local changes in {path}.',
+  'gitView.changes.revertFileConfirm': 'Revert file',
+  'diffView.hunk.discardDialogTitle': 'Discard this hunk?',
+  'diffView.hunk.discardDescription': 'This will discard these local changes in {path}.',
+  'sessions.sidebar.project.actions.archiveAll': 'Archive all sessions',
+  'sessions.sidebar.project.archiveAll.title': 'Archive sessions in {project}?',
+  'sessions.sidebar.project.archiveAll.descriptionSingle': '{count} session moves to the archive. Pinned, running and In work sessions stay.',
+  'sessions.sidebar.project.archiveAll.descriptionPlural': '{count} sessions move to the archive. Pinned, running and In work sessions stay.',
+  'sessions.sidebar.project.archiveAll.nothing': 'Nothing to archive: every session here is pinned, running or In work.',
+  'contextPanel.browser.devServers.hide': 'Hide port {port} from this list',
+  'contextPanel.browser.devServers.showHiddenSingle': 'Show {count} hidden port',
+  'contextPanel.browser.devServers.showHiddenPlural': 'Show {count} hidden ports',
+  'sidebarFilesTree.menu.openInDefaultApp': 'Open in default app',
 } as const;
 
 export type I18nKey = keyof typeof dict;

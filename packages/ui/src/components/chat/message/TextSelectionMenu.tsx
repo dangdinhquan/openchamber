@@ -18,6 +18,8 @@ import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { useI18n } from '@/lib/i18n';
 import { isIMECompositionEvent } from '@/lib/ime';
+import { getTypeToCommentText } from '@/lib/typeToComment';
+import { useCommentImagePaste } from '@/components/comments/useCommentImagePaste';
 import { useMessageTTS } from '@/hooks/useMessageTTS';
 import {
     useMobileCommentComposerController,
@@ -121,6 +123,18 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
     element.style.height = 'auto';
     element.style.height = `${Math.min(element.scrollHeight, 120)}px`;
   }, []);
+
+  // A pasted image becomes a citation in the comment; the caret lands after
+  // it once the new text renders.
+  const { takePastedImages, attachCitedImages, discardPastedImages } = useCommentImagePaste();
+  const pendingCommentCaretRef = React.useRef<number | null>(null);
+  React.useLayoutEffect(() => {
+    const caret = pendingCommentCaretRef.current;
+    if (caret === null) return;
+    pendingCommentCaretRef.current = null;
+    commentInputRef.current?.setSelectionRange(caret, caret);
+    resizeCommentInput();
+  }, [commentText, resizeCommentInput]);
   const isDraggingRef = React.useRef(false);
   const [isOpening, setIsOpening] = React.useState(false);
   const [isAddingToNotes, setIsAddingToNotes] = React.useState(false);
@@ -542,17 +556,39 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
     return container && range ? captureChatQuoteAnchor(container, range) : null;
   }, [containerRef]);
 
-  const handleOpenComment = React.useCallback(() => {
+  const openComment = React.useCallback((initialText: string) => {
     if (!selectedTextMarkdown) return;
+    // Images pasted into an abandoned comment never reach the composer.
+    discardPastedImages();
     setSelectedAnchor(captureCommentAnchor());
+    setCommentText(initialText);
     setCommentMode(true);
     commentModeRef.current = true;
     updateCommentRects();
     window.getSelection()?.removeAllRanges();
     queueMicrotask(() => {
-      commentInputRef.current?.focus();
+      const input = commentInputRef.current;
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
     });
-  }, [captureCommentAnchor, selectedTextMarkdown, updateCommentRects]);
+  }, [captureCommentAnchor, discardPastedImages, selectedTextMarkdown, updateCommentRects]);
+
+  const handleOpenComment = React.useCallback(() => openComment(''), [openComment]);
+
+  // Desktop: typing while the bubble is up starts the comment with that
+  // keystroke, so a quick note needs no click on Comment first.
+  React.useEffect(() => {
+    if (!position.show || !anchorVisible || commentMode || isMobile) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const text = getTypeToCommentText(event);
+      if (!text) return;
+      event.preventDefault();
+      openComment(text);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [anchorVisible, commentMode, isMobile, openComment, position.show]);
 
   // Mobile: no floating input here. The quote is handed to this column's
   // composer, which swaps its input for the comment shell. The scope is
@@ -608,9 +644,12 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
     }
     hideMenu();
     queueMicrotask(() => {
+      // Focus first: it hands the attachment slot to this column's composer,
+      // where the comment's images belong.
       focusColumnInput();
+      void attachCitedImages(commentText);
     });
-  }, [addContextDraft, commentText, currentSessionId, effectiveDirectory, focusColumnInput, hideMenu, newSessionDraftOpen, selectedAnchor, selectedMessageId, selectedTextMarkdown, t]);
+  }, [addContextDraft, attachCitedImages, commentText, currentSessionId, effectiveDirectory, focusColumnInput, hideMenu, newSessionDraftOpen, selectedAnchor, selectedMessageId, selectedTextMarkdown, t]);
 
   const currentSession = React.useMemo(() => {
     if (!currentSessionId) {
@@ -701,6 +740,12 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
           setCommentText(event.target.value);
           resizeCommentInput();
         }}
+        onPaste={(event) => {
+          const pasted = takePastedImages(event);
+          if (!pasted) return;
+          pendingCommentCaretRef.current = pasted.caret;
+          setCommentText(pasted.text);
+        }}
         onKeyDown={(event) => {
           // An IME candidate is confirmed with Enter and abandoned with
           // Escape; neither keystroke belongs to the comment yet.
@@ -772,7 +817,7 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
               className={cn(
                 'flex flex-auto items-center gap-2 rounded-xl px-3 py-2.5 text-left',
                 'text-sm font-medium leading-tight',
-                'bg-[var(--surface-muted)] text-[var(--surface-foreground)]',
+                'bg-foreground/[0.04] text-foreground',
                 'active:opacity-80',
                 'transition-opacity duration-150'
               )}
@@ -805,7 +850,7 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
                 className={cn(
                   'flex flex-[1_0_auto] items-center gap-2 rounded-xl px-3 py-2.5 text-left',
                   'text-sm font-medium leading-tight',
-                  'bg-[var(--surface-muted)] text-[var(--surface-foreground)]',
+                  'bg-foreground/[0.04] text-foreground',
                   'active:opacity-80',
                   'transition-opacity duration-150'
                 )}
@@ -827,7 +872,7 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
                 className={cn(
                   'flex min-w-0 items-center gap-2 rounded-xl px-3 py-2.5 text-left',
                   'text-sm font-medium leading-tight',
-                  'bg-[var(--surface-muted)] text-[var(--surface-foreground)]',
+                  'bg-foreground/[0.04] text-foreground',
                   'active:opacity-80',
                   'transition-opacity duration-150'
                 )}
@@ -846,7 +891,7 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({ containerR
                 className={cn(
                   'flex min-w-0 items-center gap-2 rounded-xl px-3 py-2.5 text-left',
                   'text-sm font-medium leading-tight',
-                  'bg-[var(--surface-muted)] text-[var(--surface-foreground)]',
+                  'bg-foreground/[0.04] text-foreground',
                   'active:opacity-80 disabled:opacity-60 disabled:cursor-not-allowed',
                   'transition-opacity duration-150'
                 )}

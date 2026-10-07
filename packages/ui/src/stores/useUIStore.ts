@@ -973,6 +973,9 @@ interface UIStore {
   editorFontSize: number;
   uiFont: UiFontOption;
   monoFont: MonoFontOption;
+  /** Family names used when `uiFont` / `monoFont` is `custom`. */
+  customUiFont: string;
+  customMonoFont: string;
   padding: number;
   cornerRadius: number;
   inputBarOffset: number;
@@ -984,6 +987,8 @@ interface UIStore {
   collapsedModelProviders: string[];
   customProviderIcons: Record<string, CustomProviderIcon>;
   recentModels: Array<{ providerID: string; modelID: string }>;
+  /** `provider/model` last picked in a chat composer; a new session starts on it when nothing is configured. */
+  lastSelectedModel: string | undefined;
   recentAgents: string[];
   recentEfforts: Record<string, string[]>;
 
@@ -1224,6 +1229,8 @@ interface UIStore {
   setEditorFontSize: (size: number) => void;
   setUiFont: (font: UiFontOption) => void;
   setMonoFont: (font: MonoFontOption) => void;
+  setCustomUiFont: (family: string) => void;
+  setCustomMonoFont: (family: string) => void;
   setPadding: (size: number) => void;
   setCornerRadius: (radius: number) => void;
   setInputBarOffset: (offset: number) => void;
@@ -1247,6 +1254,7 @@ interface UIStore {
   setModelProvidersCollapsed: (providerIDs: string[], collapsed: boolean) => void;
   isFavoriteModel: (providerID: string, modelID: string) => boolean;
   addRecentModel: (providerID: string, modelID: string) => void;
+  setLastSelectedModel: (providerID: string, modelID: string) => void;
   addRecentAgent: (agentName: string) => void;
   addRecentEffort: (providerID: string, modelID: string, variant: string | undefined) => void;
   setDiffLayoutPreference: (mode: 'dynamic' | 'inline' | 'side-by-side') => void;
@@ -1435,6 +1443,8 @@ export const useUIStore = create<UIStore>()(
         editorFontSize: 13,
         uiFont: DEFAULT_UI_FONT,
         monoFont: DEFAULT_MONO_FONT,
+        customUiFont: '',
+        customMonoFont: '',
         padding: 100,
         cornerRadius: 18,
         inputBarOffset: 0,
@@ -1445,6 +1455,7 @@ export const useUIStore = create<UIStore>()(
         collapsedModelProviders: [],
         customProviderIcons: {},
         recentModels: [],
+        lastSelectedModel: undefined,
         recentAgents: [],
         recentEfforts: {},
         diffLayoutPreference: 'inline',
@@ -2454,6 +2465,14 @@ export const useUIStore = create<UIStore>()(
           set({ monoFont: font });
         },
 
+        setCustomUiFont: (family) => {
+          set({ customUiFont: family.slice(0, 100) });
+        },
+
+        setCustomMonoFont: (family) => {
+          set({ customMonoFont: family.slice(0, 100) });
+        },
+
         setPadding: (size) => {
           // Clamp between 50% and 200%
           const clampedSize = Math.max(50, Math.min(200, size));
@@ -2785,6 +2804,12 @@ export const useUIStore = create<UIStore>()(
               recentModels: [{ providerID, modelID }, ...filtered].slice(0, 5),
             };
           });
+        },
+
+        setLastSelectedModel: (providerID, modelID) => {
+          const next = `${providerID}/${modelID}`;
+          if (get().lastSelectedModel === next) return;
+          set({ lastSelectedModel: next });
         },
 
         addRecentAgent: (agentName) => {
@@ -3396,6 +3421,8 @@ export const useUIStore = create<UIStore>()(
           editorFontSize: state.editorFontSize,
           uiFont: state.uiFont,
           monoFont: state.monoFont,
+          customUiFont: state.customUiFont,
+          customMonoFont: state.customMonoFont,
           padding: state.padding,
           cornerRadius: state.cornerRadius,
           favoriteModels: state.favoriteModels,
@@ -3404,6 +3431,7 @@ export const useUIStore = create<UIStore>()(
           collapsedModelProviders: state.collapsedModelProviders,
           customProviderIcons: state.customProviderIcons,
           recentModels: state.recentModels,
+          lastSelectedModel: state.lastSelectedModel,
           recentAgents: state.recentAgents,
           recentEfforts: state.recentEfforts,
           diffLayoutPreference: state.diffLayoutPreference,
